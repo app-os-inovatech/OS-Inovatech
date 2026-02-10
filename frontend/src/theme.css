@@ -1,0 +1,493 @@
+/* ============================================
+   IDENTIDADE VISUAL INOVAGUIL
+   ============================================ */
+
+/* Variáveis de Cores */
+:root {
+  /* Marca Inovaguil */
+  --brand-red: #C8102E;
+  --brand-blue: #003DA5;
+  --brand-blue-light: #1E73BE;
+  --brand-red-accent: #E31937;
+  
+  /* Neutros */
+  --bg-primary: #F5F7FA;
+  --bg-secondary: #FFFFFF;
+  --text-dark: #2C3E50;
+  --text-light: #6C757D;
+  --text-white: #FFFFFF;
+  --border-color: #E0E0E0;
+  
+  /* Estados */
+  --success: #28A745;
+  --warning: #FFC107;
+  --danger: #DC3545;
+  --info: #17A2B8;
+  
+  /* Sombras */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.15);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.15);
+  
+  /* Raios de borda */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+
+/* Headers e Títulos */
+.page-header,
+.dashboard-header {
+  background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-red) 100%);
+  color: var(--text-white);
+  padding: 25px 30px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  margin-bottom: 30px;
+}
+
+.page-header h1,
+.dashboard-header h1 {
+  margin: 0;
+  font-size: 2em;
+  color: var(--text-white);
+}
+
+.page-header button,
+.dashboard-header button {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--text-white);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.page-header button:hover,
+.dashboard-header button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  box-shadow: var(--shadow-md);
+}
+
+/* Botões Primários */
+.btn-primary,
+.btn-edit,
+.btn-card {
+  background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-light) 100%);
+  color: var(--text-white);
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-primary:hover,
+.btn-edit:hover,
+.btn-card:hover {
+  background: linear-gradient(135deg, var(--brand-red) 0%, var(--brand-red-accent) 100%);
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+
+/* Botões Secundários */
+.btn-cancel,
+.btn-back,
+.btn-voltar {
+  background: var(--text-light);
+  color: var(--text-dark);
+  border: 1px solid var(--border-color);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.btn-cancel:hover,
+.btn-back:hover,
+.btn-voltar:hover {
+  background: var(--border-color);
+  box-shadow: var(--shadow-md);
+}
+
+/* Botões de Ação */
+.btn-delete {
+  background: var(--danger);
+  color: var(--text-white);
+  border: none;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-delete:hover {
+  background: #c82333;
+  box-shadow: var(--shadow-md);
+}
+
+/* Cards e Containers */
+.card,
+.dashboard-card,
+.modal-content {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border-color);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-4px);
+  transition: all 0.3s ease;
+}
+
+/* Tabelas */
+.table-container table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+}
+
+.table-container table th {
+  background: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-blue-light) 100%);
+  color: var(--text-white);
+  padding: 15px;
+  font-weight: bold;
+  text-align: left;
+}
+
+.table-container table td {
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-dark);
+}
+
+.table-container table tbody tr:hover {
+  background: var(--bg-primary);
+  transition: all 0.2s ease;
+}
+
+/* Badges de Status */
+.badge-pendente {
+  background: var(--warning);
+  color: #000;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+.badge-atribuido {
+  background: var(--brand-blue-light);
+  color: var(--text-white);
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+.badge-em-andamento {
+  background: var(--brand-blue);
+  color: var(--text-white);
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+.badge-concluido {
+  background: var(--success);
+  color: var(--text-white);
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+.badge-cancelado {
+  background: var(--danger);
+  color: var(--text-white);
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+/* Inputs e Formulários */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="datetime-local"],
+textarea,
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 1em;
+  font-family: inherit;
+  transition: all 0.3s ease;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="date"]:focus,
+input[type="datetime-local"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 3px rgba(0, 61, 165, 0.1);
+  outline: none;
+}
+
+/* Labels */
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: var(--text-dark);
+}
+
+label span {
+  color: var(--danger);
+  margin-left: 4px;
+}
+
+/* Alertas */
+.alert {
+  padding: 15px;
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
+  border-left: 4px solid;
+}
+
+.alert-success {
+  background: #d4edda;
+  border-left-color: var(--success);
+  color: #155724;
+}
+
+.alert-warning {
+  background: #fff3cd;
+  border-left-color: var(--warning);
+  color: #856404;
+}
+
+.alert-danger {
+  background: #f8d7da;
+  border-left-color: var(--danger);
+  color: #721c24;
+}
+
+.alert-info {
+  background: #d1ecf1;
+  border-left-color: var(--info);
+  color: #0c5460;
+}
+
+/* Loading e Spinners */
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--brand-blue);
+  font-size: 1.2em;
+  font-weight: bold;
+}
+
+.spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--border-color);
+  border-top-color: var(--brand-blue);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Modais */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  max-width: 600px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Links */
+a {
+  color: var(--brand-blue);
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+a:hover {
+  color: var(--brand-red);
+  text-decoration: underline;
+}
+
+/* Utilitários */
+.text-primary {
+  color: var(--brand-blue);
+}
+
+.text-secondary {
+  color: var(--text-light);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.bg-light {
+  background: var(--bg-primary);
+}
+
+.bg-white {
+  background: var(--bg-secondary);
+}
+
+.border-top {
+  border-top: 3px solid var(--brand-red);
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+  .page-header,
+  .dashboard-header {
+    padding: 15px 20px;
+  }
+  
+  .page-header h1,
+  .dashboard-header h1 {
+    font-size: 1.5em;
+  }
+  
+  .table-container table {
+    font-size: 0.9em;
+  }
+  
+  .modal-content {
+    width: 95%;
+  }
+}
+
+/* OTIMIZAÇÕES MOBILE EXTRA */
+@media (max-width: 480px) {
+  .page-header,
+  .dashboard-header {
+    padding: 15px 20px;
+    margin-bottom: 20px;
+  }
+
+  .page-header h1,
+  .dashboard-header h1 {
+    font-size: 1.2em;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-success,
+  .btn-danger,
+  .btn-warning {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+
+  .card,
+  .dashboard-card {
+    padding: 15px;
+    margin-bottom: 15px;
+  }
+
+  .card h3,
+  .dashboard-card h3 {
+    font-size: 1.1em;
+  }
+
+  .table-container {
+    overflow-x: auto;
+    margin-bottom: 15px;
+  }
+
+  .table-container table {
+    font-size: 12px;
+  }
+
+  .table-container table th,
+  .table-container table td {
+    padding: 8px;
+  }
+
+  .modal-content {
+    width: 95%;
+    padding: 20px;
+    border-radius: 8px;
+  }
+
+  .modal-header {
+    padding: 15px;
+  }
+
+  .modal-body {
+    padding: 15px;
+  }
+
+  .form-group label {
+    font-size: 14px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  .badge {
+    font-size: 11px;
+    padding: 4px 8px;
+  }
+
+  .alert {
+    padding: 12px;
+    font-size: 13px;
+  }
+}

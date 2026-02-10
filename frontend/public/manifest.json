@@ -1,0 +1,27 @@
+{
+  "name": "Sistema OS - INOVAGUIL",
+  "short_name": "Sistema OS",
+  "description": "Sistema de Ordem de Serviço INOVAGUIL",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#003DA5",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "logos/Inovaguil-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "logos/Inovaguil-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

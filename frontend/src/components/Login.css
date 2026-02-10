@@ -1,0 +1,173 @@
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #003DA5 0%, #1E73BE 100%);
+}
+
+.login-box {
+  background: white;
+  padding: 40px;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-logo {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.login-logo img {
+  max-width: 150px;
+  height: auto;
+}
+
+.login-box h1 {
+  color: #003DA5;
+  font-size: 24px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.login-box h2 {
+  color: #C8102E;
+  font-size: 28px;
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  color: #555;
+  font-weight: 500;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 16px;
+  box-sizing: border-box;
+  transition: border-color 0.3s;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+button[type="submit"] {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+button[type="submit"]:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.erro-message {
+  background: #fee;
+  color: #c33;
+  padding: 12px;
+  border-radius: 5px;
+  margin-bottom: 20px;
+  border-left: 4px solid #c33;
+}
+
+.credenciais-teste {
+  margin-top: 30px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 5px;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* RESPONSIVIDADE MOBILE */
+@media (max-width: 768px) {
+  .login-container {
+    padding: 20px;
+  }
+
+  .login-box {
+    padding: 30px 20px;
+  }
+
+  .login-logo img {
+    max-width: 120px;
+  }
+
+  .login-box h1 {
+    font-size: 20px;
+  }
+
+  .login-box h2 {
+    font-size: 24px;
+  }
+
+  .form-group input {
+    font-size: 16px;
+  }
+
+  button[type="submit"] {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-container {
+    padding: 15px;
+  }
+
+  .login-box {
+    padding: 25px 15px;
+    max-width: 100%;
+  }
+
+  .login-logo img {
+    max-width: 100px;
+  }
+
+  .login-box h1 {
+    font-size: 18px;
+  }
+
+  .login-box h2 {
+    font-size: 22px;
+  }
+
+  .credenciais-teste p {
+    font-size: 12px;
+  }
+}
+
+.credenciais-teste p {
+  margin: 5px 0;
+  color: #666;
+}
+
+.credenciais-teste strong {
+  color: #333;
+}

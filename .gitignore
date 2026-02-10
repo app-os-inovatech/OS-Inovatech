@@ -1,0 +1,31 @@
+# Node
+node_modules/
+
+# Build outputs
+/dist/
+/build/
+/coverage/
+/.cache/
+/frontend/build/
+
+# Node (project folders)
+/frontend/node_modules/
+/backend/node_modules/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Project-specific
+/backend/uploads/

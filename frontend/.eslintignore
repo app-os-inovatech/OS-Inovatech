@@ -1,0 +1,3 @@
+/* eslint-disable no-undef */
+// Arquivo para desabilitar warnings de variáveis externas
+// As variáveis com localhost:5001 são reescritas em tempo de execução pelo fetchInterceptor
