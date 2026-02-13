@@ -77,6 +77,12 @@ async function initializeMockData() {
 // Tentar conectar ao MySQL com timeout
 async function initializePool() {
   try {
+    console.log('🔍 Variáveis de ambiente MySQL:');
+    console.log('   DB_HOST:', process.env.DB_HOST || 'undefined');
+    console.log('   DB_PORT:', process.env.DB_PORT || 'undefined');
+    console.log('   DB_USER:', process.env.DB_USER || 'undefined');
+    console.log('   DB_NAME:', process.env.DB_NAME || 'undefined');
+    
     pool = mysql.createPool({
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
