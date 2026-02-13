@@ -77,30 +77,51 @@ async function initializeMockData() {
 // Tentar conectar ao MySQL com timeout
 async function initializePool() {
   try {
-    // Usa variáveis MYSQL* do Railway ou DB_* customizadas
-    const host = process.env.MYSQLHOST || process.env.DB_HOST || 'localhost';
-    const port = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
-    const user = process.env.MYSQLUSER || process.env.DB_USER || 'root';
-    const password = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '';
-    const database = process.env.MYSQLDATABASE || process.env.DB_NAME || 'service_order_db';
+    let config;
+    
+    // Tenta usar DATABASE_URL primeiro (Railway)
+    if (process.env.DATABASE_URL) {
+      console.log('🔍 Usando DATABASE_URL');
+      const url = new URL(process.env.DATABASE_URL);
+      config = {
+        host: url.hostname,
+        port: url.port || 3306,
+        user: url.username,
+        password: url.password,
+        database: url.pathname.slice(1), // remove /
+        waitForConnections: true,
+        connectionLimit: 5,
+        queueLimit: 0,
+        enableKeepAlive: true
+      };
+    } else {
+      // Fallback para variáveis individuais
+      const host = process.env.MYSQLHOST || process.env.DB_HOST || 'localhost';
+      const port = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
+      const user = process.env.MYSQLUSER || process.env.DB_USER || 'root';
+      const password = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '';
+      const database = process.env.MYSQLDATABASE || process.env.DB_NAME || 'service_order_db';
+      
+      config = {
+        host,
+        user,
+        password,
+        database,
+        port,
+        waitForConnections: true,
+        connectionLimit: 5,
+        queueLimit: 0,
+        enableKeepAlive: true
+      };
+    }
     
     console.log('🔍 Conectando ao MySQL:');
-    console.log('   Host:', host);
-    console.log('   Port:', port);
-    console.log('   User:', user);
-    console.log('   Database:', database);
+    console.log('   Host:', config.host);
+    console.log('   Port:', config.port);
+    console.log('   User:', config.user);
+    console.log('   Database:', config.database);
     
-    pool = mysql.createPool({
-      host,
-      user,
-      password,
-      database,
-      port,
-      waitForConnections: true,
-      connectionLimit: 5,
-      queueLimit: 0,
-      enableKeepAlive: true
-    });
+    pool = mysql.createPool(config);
 
     const connection = await Promise.race([
       pool.getConnection(),
