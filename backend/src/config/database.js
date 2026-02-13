@@ -77,18 +77,25 @@ async function initializeMockData() {
 // Tentar conectar ao MySQL com timeout
 async function initializePool() {
   try {
-    console.log('🔍 Variáveis de ambiente MySQL:');
-    console.log('   DB_HOST:', process.env.DB_HOST || 'undefined');
-    console.log('   DB_PORT:', process.env.DB_PORT || 'undefined');
-    console.log('   DB_USER:', process.env.DB_USER || 'undefined');
-    console.log('   DB_NAME:', process.env.DB_NAME || 'undefined');
+    // Usa variáveis MYSQL* do Railway ou DB_* customizadas
+    const host = process.env.MYSQLHOST || process.env.DB_HOST || 'localhost';
+    const port = process.env.MYSQLPORT || process.env.DB_PORT || 3306;
+    const user = process.env.MYSQLUSER || process.env.DB_USER || 'root';
+    const password = process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '';
+    const database = process.env.MYSQLDATABASE || process.env.DB_NAME || 'service_order_db';
+    
+    console.log('🔍 Conectando ao MySQL:');
+    console.log('   Host:', host);
+    console.log('   Port:', port);
+    console.log('   User:', user);
+    console.log('   Database:', database);
     
     pool = mysql.createPool({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'service_order_db',
-      port: process.env.DB_PORT || 3306,
+      host,
+      user,
+      password,
+      database,
+      port,
       waitForConnections: true,
       connectionLimit: 5,
       queueLimit: 0,
