@@ -20,6 +20,8 @@ RUN npm ci --only=production
 
 COPY backend . 
 
+RUN chmod +x start.sh
+
 EXPOSE 5001
 
-CMD ["npm", "start"]
+CMD ["sh", "start.sh"]
