@@ -1,8 +1,8 @@
 #!/bin/sh
 
 # Aguarda MySQL estar pronto
-echo "Aguardando MySQL..."
-sleep 15
+echo "Aguardando MySQL estar disponível..."
+node wait-for-mysql.js
 
 # Inicializa banco (se necessário)
 echo "Inicializando banco de dados..."
