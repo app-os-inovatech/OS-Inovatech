@@ -17,6 +17,7 @@
 // --empresa-id     empresa do projeto e do diário Flash
 // --armazem-id     armazém de onde sai o material (a operação fica na empresa do armazém)
 // --funcionario-id técnico que recebe o custo/hora (ou --tecnico "Nome" para buscar por nome)
+// --etapas         etapas a executar, ex.: 1,2 (padrão: todas)
 //
 // Requer ODOO_URL, ODOO_DB e ODOO_API_KEY (ver src/integrations/odoo/odooClient.js).
 // No ambiente com proxy, rode com NODE_USE_ENV_PROXY=1.
@@ -39,7 +40,7 @@ const CATEGORIAS_DESPESA = [
 ];
 
 function lerArgs(argv) {
-  const args = { aplicar: false, horasMes: 176 };
+  const args = { aplicar: false, horasMes: 176, etapas: [1, 2, 3, 4, 5] };
   const numeros = { '--empresa-id': 'empresaId', '--armazem-id': 'armazemId', '--funcionario-id': 'funcionarioId',
     '--valor-mensal': 'valorMensal', '--horas-mes': 'horasMes' };
   for (let i = 0; i < argv.length; i++) {
@@ -48,6 +49,7 @@ function lerArgs(argv) {
     else if (a === '--codigo') args.codigo = argv[++i];
     else if (a === '--loja') args.loja = argv[++i];
     else if (a === '--tecnico') args.tecnico = argv[++i];
+    else if (a === '--etapas') args.etapas = argv[++i].split(',').map(Number);
     else if (numeros[a]) args[numeros[a]] = Number(argv[++i]);
     else throw new Error(`Argumento desconhecido: ${a}`);
   }
@@ -75,6 +77,7 @@ async function main() {
   log(`Empresa: ${empresa.name}\n`);
 
   const pendencias = [];
+  const etapa = (n) => args.etapas.includes(n);
 
   // Executa a criação apenas no modo --aplicar
   const criar = async (model, vals, descricao) => {
@@ -88,6 +91,7 @@ async function main() {
   };
 
   // 1. Conta analítica + projeto ------------------------------------------------
+  if (etapa(1)) {
   log('1. Conta analítica e projeto da loja');
   const nomeProjeto = `${args.codigo} – Montagem ${args.loja}`;
 
@@ -115,8 +119,10 @@ async function main() {
     await criar('project.project', vals, `projeto "${nomeProjeto}" com Planilha de horas`);
   }
 
+  }
+
   // 2. Custo/hora do técnico -----------------------------------------------------
-  if (args.funcionarioId || args.tecnico) {
+  if (etapa(2) && (args.funcionarioId || args.tecnico)) {
     log('\n2. Custo/hora do técnico');
     const custoHora = Math.round((args.valorMensal / args.horasMes) * 100) / 100;
     log(`  R$ ${args.valorMensal.toFixed(2)} / ${args.horasMes} h = R$ ${custoHora.toFixed(2)}/h`);
@@ -136,6 +142,7 @@ async function main() {
   }
 
   // 3. Categorias de despesa -----------------------------------------------------
+  if (etapa(3)) {
   log('\n3. Categorias de despesa');
   for (const cat of CATEGORIAS_DESPESA) {
     const [existe] = await odoo.searchRead('product.product', [['default_code', '=', cat.code]], ['id', 'name']);
@@ -151,7 +158,10 @@ async function main() {
   }
   pendencias.push('Peça à contabilidade para conferir a conta de despesa de cada categoria DSP-* (aba Contabilidade do produto).');
 
+  }
+
   // 4. Diário Cartão Flash -------------------------------------------------------
+  if (etapa(4)) {
   log('\n4. Diário "Cartão Flash"');
   const [diario] = await odoo.searchRead(
     'account.journal',
@@ -167,7 +177,10 @@ async function main() {
     );
   }
 
+  }
+
   // 5. Estoque: consumo de material na montagem --------------------------------
+  if (etapa(5)) {
   log('\n5. Estoque: operação "Consumo – Montagem"');
   const [armazem] = await odoo.searchRead(
     'stock.warehouse',
@@ -225,6 +238,8 @@ async function main() {
       );
     }
     pendencias.push('Inventário → Configurações: confirme a valorização automática e o custo médio (AVCO) nas categorias de produto do material.');
+  }
+
   }
 
   log('\nPendências manuais:');
