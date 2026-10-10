@@ -153,14 +153,14 @@ async function emitir(odoo, c6, args) {
     res_id: fatura.id,
     type: 'binary',
     mimetype: 'application/pdf',
-    datas: pdf.toString('base64'),
+    raw: pdf.toString('base64'),
   });
   const corpo = [
     `<p><b>Boleto C6 emitido</b> – ${reais(cobranca.amount)}, vencimento ${cobranca.due_date}</p>`,
     `<p>Linha digitável: ${boleto.digitable_line || '-'}<br/>Nosso número: ${boleto.our_number || '-'}<br/>Identificador C6: ${cobranca.external_reference_id}</p>`,
     pix.qr_code ? `<p>Pix copia e cola: ${pix.qr_code}</p>` : '',
   ].join('');
-  await odoo.call('account.move', 'message_post', { ids: [fatura.id], body: corpo, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+  await odoo.call('account.move', 'message_post', { ids: [fatura.id], body: corpo, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
   console.log(`✔ PDF anexado à fatura ${fatura.name} e linha digitável registrada no histórico`);
   if (boleto.digitable_line) console.log(`  Linha digitável: ${boleto.digitable_line}`);
 }
@@ -201,7 +201,7 @@ async function cancelar(odoo, c6, args) {
     }
     await c6.cancelarCobranca(id);
     await odoo.write('ir.attachment', [a.id], { name: `Boleto C6 CANCELADO ${id}.pdf` });
-    await odoo.call('account.move', 'message_post', { ids: [fatura.id], body: `<p>Boleto C6 ${id} cancelado.</p>`, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    await odoo.call('account.move', 'message_post', { ids: [fatura.id], body: `<p>Boleto C6 ${id} cancelado.</p>`, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
     console.log(`✔ Boleto ${id} cancelado`);
   }
   if (!args.aplicar) console.log('Nada foi cancelado. Rode novamente com --aplicar.');
