@@ -72,7 +72,7 @@ class C6Client {
     });
   }
 
-  async _requisicao(metodo, caminho, { query, form, json, headers = {} } = {}) {
+  async _requisicao(metodo, caminho, { query, form, json, headers = {}, binario = false } = {}) {
     const url = new URL(this.baseUrl + caminho);
     if (query) Object.entries(query).forEach(([k, v]) => v !== undefined && url.searchParams.set(k, v));
     let corpo;
@@ -88,10 +88,12 @@ class C6Client {
 
     const resposta = await new Promise((resolve, reject) => {
       const tratar = (res) => {
-        let dados = '';
-        res.setEncoding('utf8');
-        res.on('data', (c) => (dados += c));
-        res.on('end', () => resolve({ status: res.statusCode, texto: dados }));
+        const partes = [];
+        res.on('data', (c) => partes.push(c));
+        res.on('end', () => {
+          const corpoResp = Buffer.concat(partes);
+          resolve({ status: res.statusCode, tipo: res.headers['content-type'] || '', bruto: corpoResp, texto: corpoResp.toString('utf8') });
+        });
       };
       let req;
       if (url.protocol === 'http:') {
@@ -105,6 +107,7 @@ class C6Client {
       req.end();
     });
 
+    if (binario && resposta.status < 400 && !resposta.tipo.includes('json')) return resposta.bruto;
     let dados = null;
     try {
       dados = resposta.texto ? JSON.parse(resposta.texto) : null;
@@ -154,6 +157,54 @@ class C6Client {
       de = new Date(fimJanela.getTime() + dia);
     }
     return lancamentos;
+  }
+
+  // --- Cobranças (API Bolepix: boleto + Pix QR Code opcional) ---------------
+
+  // Identificador da cobrança definido pelo integrador: 26 caracteres [A-Z0-9], único
+  static novoIdCobranca() {
+    const alfabeto = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    let t = Date.now();
+    let tempo = '';
+    for (let i = 0; i < 10; i++) {
+      tempo = alfabeto[t % 32] + tempo;
+      t = Math.floor(t / 32);
+    }
+    const aleatorio = Array.from(require('crypto').randomBytes(16), (b) => alfabeto[b % 32]).join('');
+    return tempo + aleatorio;
+  }
+
+  _cabecalhosParceiro() {
+    return { 'partner-software-name': 'Inovatech Odoo', 'partner-software-version': '1.0.0' };
+  }
+
+  emitirCobranca(dados) {
+    return this._autenticado('POST', '/v2/bank_slips', { json: dados, headers: this._cabecalhosParceiro() });
+  }
+
+  consultarCobranca(idCobranca) {
+    return this._autenticado('GET', `/v2/bank_slips/${idCobranca}`, { headers: this._cabecalhosParceiro() });
+  }
+
+  listarCobrancas(filtros) {
+    return this._autenticado('GET', '/v2/bank_slips/list', { query: filtros, headers: this._cabecalhosParceiro() });
+  }
+
+  cancelarCobranca(idCobranca) {
+    return this._autenticado('PUT', `/v2/bank_slips/${idCobranca}/cancel`, { headers: this._cabecalhosParceiro() });
+  }
+
+  // Devolve o PDF como Buffer (a API pode responder o arquivo ou um JSON com o PDF em base64)
+  async pdfCobranca(idCobranca) {
+    const r = await this._autenticado('GET', `/v2/bank_slips/${idCobranca}/pdf`, { headers: this._cabecalhosParceiro(), binario: true });
+    if (Buffer.isBuffer(r)) return r;
+    const base64 = r && (r.base64_pdf_file || r.pdf || r.content || r.file);
+    if (!base64) throw new Error('Resposta do PDF do C6 em formato inesperado.');
+    return Buffer.from(base64, 'base64');
+  }
+
+  get carteira() {
+    return this.baseUrl.includes('sandbox') ? '21' : '15';
   }
 }
 
