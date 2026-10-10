@@ -1,7 +1,7 @@
 // Configura no Odoo a estrutura de custo de uma montagem de loja.
 //
 // Cria (ou reaproveita, se já existir):
-//   1. Conta analítica da loja (compartilhada entre empresas) + projeto com Planilha de horas
+//   1. Projeto "Montagem <Loja>" com Planilha de horas + conta analítica <CLIENTE-LOJA>
 //   2. Custo/hora do técnico (mão de obra entra no custo da loja via timesheet)
 //   3. Categorias de despesa (produtos "pode ser despesa")
 //   4. Diário bancário "Cartão Flash" (depósitos = transferência interna, gastos = custo)
@@ -11,10 +11,12 @@
 //
 // Uso:
 //   node scripts/odoo-setup-montagem.js \
-//     --codigo LJ-0001 --loja "Fortaleza" --empresa-id 2 --armazem-id 1 \
-//     --funcionario-id 44 --valor-mensal 5000 [--horas-mes 176] [--aplicar]
+//     --codigo PLK-PARANGABA --loja "PLK Parangaba" --empresa-id 2 --cliente-id 13162 \
+//     --armazem-id 4 --funcionario-id 44 --valor-mensal 5000 [--horas-mes 176] [--aplicar]
 //
-// --empresa-id     empresa do projeto e do diário Flash
+// --codigo         código da conta analítica da loja (CLIENTE-LOJA)
+// --empresa-id     empresa do projeto, da conta analítica e do diário Flash
+// --cliente-id     cliente (loja) do projeto; liga o "Faturável" para a receita aparecer
 // --armazem-id     armazém de onde sai o material (a operação fica na empresa do armazém)
 // --funcionario-id técnico que recebe o custo/hora (ou --tecnico "Nome" para buscar por nome)
 // --etapas         etapas a executar, ex.: 1,2 (padrão: todas)
@@ -42,7 +44,7 @@ const CATEGORIAS_DESPESA = [
 function lerArgs(argv) {
   const args = { aplicar: false, horasMes: 176, etapas: [1, 2, 3, 4, 5] };
   const numeros = { '--empresa-id': 'empresaId', '--armazem-id': 'armazemId', '--funcionario-id': 'funcionarioId',
-    '--valor-mensal': 'valorMensal', '--horas-mes': 'horasMes' };
+    '--cliente-id': 'clienteId', '--valor-mensal': 'valorMensal', '--horas-mes': 'horasMes' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--aplicar') args.aplicar = true;
@@ -54,7 +56,7 @@ function lerArgs(argv) {
     else throw new Error(`Argumento desconhecido: ${a}`);
   }
   if (!args.codigo || !args.loja || !args.empresaId) {
-    throw new Error('Informe --codigo, --loja e --empresa-id (ex.: --codigo LJ-0001 --loja "Fortaleza" --empresa-id 2).');
+    throw new Error('Informe --codigo, --loja e --empresa-id (ex.: --codigo PLK-PARANGABA --loja "PLK Parangaba" --empresa-id 2).');
   }
   if ((args.tecnico || args.funcionarioId) && !(args.valorMensal > 0 && args.horasMes > 0)) {
     throw new Error('Para o técnico informe --valor-mensal (e opcionalmente --horas-mes).');
@@ -93,9 +95,10 @@ async function main() {
   // 1. Conta analítica + projeto ------------------------------------------------
   if (etapa(1)) {
   log('1. Conta analítica e projeto da loja');
-  const nomeProjeto = `${args.codigo} – Montagem ${args.loja}`;
+  // Padrão: projeto "Montagem <Loja>" com conta analítica de código <CLIENTE-LOJA> (ex.: PLK-PARANGABA)
+  const nomeProjeto = `Montagem ${args.loja}`;
 
-  // Conta sem empresa: recebe custos de todas as empresas (material sai de outra empresa)
+  // A conta fica na empresa do projeto: o material sai do estoque dessa mesma empresa
   let [conta] = await odoo.searchRead('account.analytic.account', [['code', '=', args.codigo]], ['id', 'name']);
   if (conta) {
     log(`  = conta analítica já existe: ${conta.name} (id ${conta.id})`);
@@ -104,18 +107,22 @@ async function main() {
     if (!planos.length) throw new Error('Plano analítico de projetos não encontrado.');
     const id = await criar(
       'account.analytic.account',
-      { name: nomeProjeto, code: args.codigo, plan_id: planos[0].id, company_id: false },
-      `conta analítica "${nomeProjeto}" (${args.codigo}, plano ${planos[0].name}, todas as empresas)`
+      { name: nomeProjeto, code: args.codigo, plan_id: planos[0].id, company_id: empresa.id, partner_id: args.clienteId || false },
+      `conta analítica "${nomeProjeto}" (${args.codigo}, plano ${planos[0].name})`
     );
     if (id) conta = { id };
   }
 
-  const [projeto] = await odoo.searchRead('project.project', [['name', 'ilike', args.codigo]], ['id', 'name']);
+  const [projeto] = conta?.id
+    ? await odoo.searchRead('project.project', [['account_id', '=', conta.id]], ['id', 'name'])
+    : [];
   if (projeto) {
     log(`  = projeto já existe: ${projeto.name} (id ${projeto.id})`);
   } else {
     const vals = { name: nomeProjeto, company_id: empresa.id, allow_timesheets: true };
-    if (conta) vals.account_id = conta.id;
+    if (conta?.id) vals.account_id = conta.id;
+    // Com cliente, o projeto fica faturável e mostra o pedido de venda na Rentabilidade
+    if (args.clienteId) Object.assign(vals, { partner_id: args.clienteId, allow_billable: true });
     await criar('project.project', vals, `projeto "${nomeProjeto}" com Planilha de horas`);
   }
 
