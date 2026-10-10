@@ -58,6 +58,7 @@ class Importador {
     this.args = args;
     this.cnpj = digitos(empresa.vat);
     this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [] };
+    this.canceladas = new Set();
     this._cache = {};
   }
 
@@ -102,8 +103,20 @@ class Importador {
         await this.param('proxima', Date.now() + 61 * 60 * 1000);
         break;
       }
+      if (r.cStat === '656') {
+        // Consumo indevido: a SEFAZ bloqueia o CNPJ por 1 hora
+        console.log(`  SEFAZ pediu para aguardar 1 hora: ${r.xMotivo}`);
+        await this.param('proxima', Date.now() + 61 * 60 * 1000);
+        break;
+      }
       if (r.cStat !== '138') throw new Error(`SEFAZ recusou a consulta: ${r.cStat} – ${r.xMotivo}`);
       console.log(`  Lote: ${r.documentos.length} documentos (NSU ${Number(ultNSU)} → ${Number(r.ultNSU)} de ${Number(r.maxNSU)})`);
+      // Notas canceladas no mesmo lote não viram fatura
+      for (const doc of r.documentos) {
+        const ev = doc.tipo === 'resEvento' ? doc.dados.resEvento : doc.tipo === 'procEventoNFe' ? doc.dados.procEventoNFe.evento.infEvento : null;
+        if (ev && String(ev.tpEvento) === '110111') this.canceladas.add(ev.chNFe);
+        if (doc.tipo === 'resNFe' && doc.dados.resNFe.cSitNFe === '3') this.canceladas.add(doc.dados.resNFe.chNFe);
+      }
       for (const doc of r.documentos) {
         try {
           await this.documento(doc);
@@ -155,6 +168,7 @@ class Importador {
   async resumoNfe(res) {
     const rotulo = `${res.xNome} – ${reais(res.vNF)} (chave ${res.chNFe})`;
     if (this.antesDoInicio(res.dhEmi)) return this.resumo.ignoradas.push(`${rotulo}: emitida antes de ${this.args.desde}`);
+    if (this.canceladas.has(res.chNFe)) return this.resumo.ignoradas.push(`${rotulo}: cancelada pelo emitente`);
     if (res.cSitNFe !== '1') return this.resumo.ignoradas.push(`${rotulo}: situação ${res.cSitNFe === '3' ? 'cancelada' : 'denegada'}`);
     if (await this.faturaExistente(res.chNFe, res.CNPJ || res.CPF, res.chNFe.substr(25, 9))) return;
     if (!this.args.aplicar) return this.resumo.ciencia.push(`${rotulo} (simulação)`);
@@ -184,7 +198,7 @@ class Importador {
     const chave = ev.chNFe;
     const fatura = await this.faturaExistente(chave, chave.substr(6, 14), chave.substr(25, 9));
     const texto = `NF-e ${chave} cancelada pelo emitente`;
-    if (!fatura) return this.resumo.cancelamentos.push(`${texto} (não estava lançada)`);
+    if (!fatura) return;
     this.resumo.cancelamentos.push(`${texto}: fatura ${fatura.name} (${fatura.state}) precisa ser revista`);
     if (this.args.aplicar) {
       await this.odoo.call('account.move', 'message_post', {
@@ -211,6 +225,7 @@ class Importador {
     const rotulo = `NF-e ${ide.nNF} – ${emit.xNome} – ${reais(tot.vNF)}`;
 
     if (this.antesDoInicio(ide.dhEmi)) return this.resumo.ignoradas.push(`${rotulo}: emitida antes de ${this.args.desde}`);
+    if (this.canceladas.has(chave)) return this.resumo.ignoradas.push(`${rotulo}: cancelada pelo emitente`);
     if (digitos(dest && (dest.CNPJ || dest.CPF)) !== this.cnpj) return this.resumo.ignoradas.push(`${rotulo}: a empresa não é a destinatária (transporte ou autorização de XML)`);
     if (ide.tpNF !== '1') return this.resumo.ignoradas.push(`${rotulo}: nota de entrada emitida pelo próprio fornecedor`);
     if (ide.finNFe === '4') return this.resumo.ignoradas.push(`${rotulo}: devolução de cliente — lançar como nota de crédito de venda`);
@@ -344,6 +359,7 @@ class Importador {
 async function main() {
   const args = lerArgs(process.argv.slice(2));
   const odoo = new OdooClient();
+  console.log(`Odoo: ${(() => { try { const u = new URL(odoo.url); return `${u.protocol}//${u.host.replace(/^(.{3}).*(.{4})$/, '$1…$2')}`; } catch { return `endereço inválido (${odoo.url.length} caracteres)`; } })()}`);
   await odoo.login();
   console.log(args.aplicar ? 'Modo: APLICAR (gravando)\n' : 'Modo: SIMULAÇÃO (nada será gravado nem enviado à SEFAZ; use --aplicar)\n');
 
@@ -387,6 +403,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`\nErro: ${err.message}`);
+  const causa = err.cause ? ` (${err.cause.code || ''} ${err.cause.message || ''})`.replace(/\s+\)/, ')') : '';
+  console.error(`\nErro: ${err.message}${causa}`);
   process.exit(1);
 });
