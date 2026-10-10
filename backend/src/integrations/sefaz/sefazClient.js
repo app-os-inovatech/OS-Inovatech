@@ -115,7 +115,7 @@ class SefazClient {
 
   // Abre o socket TLS com o certificado do cliente, passando pelo proxy se houver
   _conectar(url) {
-    return new Promise((resolve, reject) => {
+    const conexao = new Promise((resolve, reject) => {
       const porta = Number(url.port) || 443;
       const tlsOpts = { servername: url.hostname, cert: this.certificado.certPem + this.certificado.cadeiaPem, key: this.certificado.keyPem };
       if (!this.proxy || semProxy(url.hostname)) {
@@ -139,6 +139,12 @@ class SefazClient {
       req.once('error', reject);
       req.end();
     });
+    // Sem resposta da SEFAZ (ex.: bloqueio de rede) a conexão TCP ficaria pendurada por minutos
+    let timer;
+    const limite = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Sem resposta de ${url.hostname} em 30 s (bloqueio de rede ou SEFAZ fora do ar)`)), 30000);
+    });
+    return Promise.race([conexao, limite]).finally(() => clearTimeout(timer));
   }
 
   async _soap(endereco, acao, corpo) {
