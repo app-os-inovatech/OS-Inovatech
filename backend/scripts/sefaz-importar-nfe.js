@@ -1,4 +1,5 @@
-// Importa para o Odoo, como fatura de fornecedor em rascunho, toda NF-e emitida contra o CNPJ das empresas.
+// Importa para o Odoo, como fatura de fornecedor em rascunho, toda NF-e emitida contra o CNPJ das empresas
+// e todo CT-e (frete) em que a empresa é a tomadora do serviço.
 // Não depende do fornecedor mandar o XML: busca direto no Ambiente Nacional da SEFAZ (Distribuição DF-e).
 //
 // Fluxo por empresa (uma por CNPJ com certificado configurado):
@@ -9,6 +10,8 @@
 //      Fornecedor novo é cadastrado; produtos são vinculados pelo código do fornecedor, EAN ou referência.
 //   4. Evento de cancelamento: avisa no histórico da fatura já importada.
 //   5. Salva o último NSU no Odoo (parâmetro de sistema sefaz_dfe.ult_nsu.<CNPJ>).
+//   6. CT-e (serviço próprio da SEFAZ, NSU em sefaz_dfe.ult_nsu_cte.<CNPJ>): quando a empresa é a
+//      tomadora, cria a fatura do frete no diário de fretes (ou no de compras, se a empresa não tiver).
 //
 // A SEFAZ só permite nova consulta 1 hora depois de responder "nenhum documento" (cStat 137);
 // por isso a próxima consulta permitida também fica salva (sefaz_dfe.proxima.<CNPJ>).
@@ -29,6 +32,7 @@ const OdooClient = require('../src/integrations/odoo/odooClient');
 const SefazClient = require('../src/integrations/sefaz/sefazClient');
 
 const TIPO_DOC_NFE = '55';
+const TIPO_DOC_CTE = '57';
 const MAX_LOTES = 20; // 50 documentos por lote
 
 function lerArgs(argv) {
@@ -48,6 +52,12 @@ const num = (v) => Number(v || 0);
 const reais = (v) => num(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const formatarCnpj = (c) => (c.length === 14 ? c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : c.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4'));
 const chaveDoc = (doc) => (doc.tipo === 'resNFe' ? doc.dados.resNFe.chNFe : doc.tipo === 'procNFe' ? digitos(doc.dados.nfeProc.NFe.infNFe['@_Id']) : null);
+const eventoDoc = (doc) =>
+  doc.tipo === 'resEvento' ? doc.dados.resEvento
+  : doc.tipo === 'procEventoNFe' ? doc.dados.procEventoNFe.evento.infEvento
+  : doc.tipo === 'procEventoCTe' ? doc.dados.procEventoCTe.eventoCTe.infEvento
+  : null;
+const lista = (v) => (v === undefined || v === null ? [] : [].concat(v));
 const escapar = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 class Importador {
@@ -57,7 +67,7 @@ class Importador {
     this.sefaz = sefaz;
     this.args = { ...args };
     this.cnpj = digitos(empresa.vat);
-    this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [], antigas: 0 };
+    this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [], antigas: 0, cteDeTerceiros: 0 };
     this.canceladas = new Set();
     this._cache = {};
   }
@@ -87,58 +97,65 @@ class Importador {
   }
 
   async processar() {
-    const agora = Date.now();
-    const proxima = Number((await this.param('proxima')) || 0);
-    if (proxima > agora) {
-      console.log(`  Aguardando a janela da SEFAZ: próxima consulta permitida às ${new Date(proxima).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
-      return this.resumo;
-    }
     // A data inicial vale também para as execuções seguintes (a primeira carga pode levar várias)
     if (this.args.desde) await this.param('desde', this.args.desde);
     else this.args.desde = (await this.param('desde')) || undefined;
     this.pendentes = new Set(JSON.parse((await this.param('pendentes')) || '[]'));
     if (this.args.aplicar) await this.reprocessarPendentes();
-    let ultNSU = (await this.param('ult_nsu')) || '0';
+    await this.consultar('nfe');
+    await this.consultar('cte');
+    await this.param('pendentes', JSON.stringify([...this.pendentes]));
+    return this.resumo;
+  }
+
+  // Lê os lotes novos de um dos serviços de distribuição (NF-e ou CT-e), cada um com seu NSU
+  async consultar(modelo) {
+    const sufixo = modelo === 'cte' ? '_cte' : '';
+    const nome = modelo === 'cte' ? 'CT-e' : 'NF-e';
+    const proxima = Number((await this.param(`proxima${sufixo}`)) || 0);
+    if (proxima > Date.now()) {
+      console.log(`  ${nome}: aguardando a janela da SEFAZ (próxima consulta às ${new Date(proxima).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })})`);
+      return;
+    }
+    let ultNSU = (await this.param(`ult_nsu${sufixo}`)) || '0';
     for (let lote = 0; lote < MAX_LOTES; lote++) {
-      const r = await this.sefaz.distribuicao(ultNSU);
+      const r = modelo === 'cte' ? await this.sefaz.distribuicaoCte(ultNSU) : await this.sefaz.distribuicao(ultNSU);
       if (r.cStat === '137') {
-        console.log(`  SEFAZ: ${r.xMotivo} (NSU ${Number(r.ultNSU)})`);
-        await this.param('proxima', Date.now() + 61 * 60 * 1000);
+        console.log(`  ${nome}: ${r.xMotivo} (NSU ${Number(r.ultNSU)})`);
+        await this.param(`proxima${sufixo}`, Date.now() + 61 * 60 * 1000);
         break;
       }
       if (r.cStat === '656') {
         // Consumo indevido: a SEFAZ bloqueia o CNPJ por 1 hora
-        console.log(`  SEFAZ pediu para aguardar 1 hora: ${r.xMotivo}`);
-        await this.param('proxima', Date.now() + 61 * 60 * 1000);
+        console.log(`  ${nome}: SEFAZ pediu para aguardar 1 hora: ${r.xMotivo}`);
+        await this.param(`proxima${sufixo}`, Date.now() + 61 * 60 * 1000);
         break;
       }
-      if (r.cStat !== '138') throw new Error(`SEFAZ recusou a consulta: ${r.cStat} – ${r.xMotivo}`);
-      console.log(`  Lote: ${r.documentos.length} documentos (NSU ${Number(ultNSU)} → ${Number(r.ultNSU)} de ${Number(r.maxNSU)})`);
-      // Notas canceladas no mesmo lote não viram fatura
+      if (r.cStat !== '138') throw new Error(`SEFAZ recusou a consulta de ${nome}: ${r.cStat} – ${r.xMotivo}`);
+      console.log(`  ${nome}: ${r.documentos.length} documentos (NSU ${Number(ultNSU)} → ${Number(r.ultNSU)} de ${Number(r.maxNSU)})`);
+      // Documentos cancelados no mesmo lote não viram fatura
       for (const doc of r.documentos) {
-        const ev = doc.tipo === 'resEvento' ? doc.dados.resEvento : doc.tipo === 'procEventoNFe' ? doc.dados.procEventoNFe.evento.infEvento : null;
-        if (ev && String(ev.tpEvento) === '110111') this.canceladas.add(ev.chNFe);
+        const ev = eventoDoc(doc);
+        if (ev && String(ev.tpEvento) === '110111') this.canceladas.add(ev.chNFe || ev.chCTe);
         if (doc.tipo === 'resNFe' && doc.dados.resNFe.cSitNFe === '3') this.canceladas.add(doc.dados.resNFe.chNFe);
       }
       for (const doc of r.documentos) {
         try {
           await this.documento(doc);
         } catch (err) {
-          this.resumo.erros.push(`NSU ${Number(doc.nsu)} (${doc.tipo}): ${err.message}`);
+          this.resumo.erros.push(`${nome} NSU ${Number(doc.nsu)} (${doc.tipo}): ${err.message}`);
           const chave = chaveDoc(doc);
           if (chave) this.pendentes.add(chave);
         }
       }
       ultNSU = r.ultNSU;
-      await this.param('ult_nsu', ultNSU);
+      await this.param(`ult_nsu${sufixo}`, ultNSU);
       if (r.ultNSU === r.maxNSU) {
         // Já está em dia: a SEFAZ pede 1 hora antes da próxima consulta
-        await this.param('proxima', Date.now() + 61 * 60 * 1000);
+        await this.param(`proxima${sufixo}`, Date.now() + 61 * 60 * 1000);
         break;
       }
     }
-    await this.param('pendentes', JSON.stringify([...this.pendentes]));
-    return this.resumo;
   }
 
   // NF-e que falharam numa execução anterior: busca de novo pela chave
@@ -160,7 +177,8 @@ class Importador {
     if (doc.tipo === 'resNFe') return this.resumoNfe(doc.dados.resNFe);
     if (doc.tipo === 'procNFe') return this.nfeCompleta(doc);
     if (doc.tipo === 'resEvento') return this.evento(doc.dados.resEvento);
-    if (doc.tipo === 'procEventoNFe') return this.evento(doc.dados.procEventoNFe.evento.infEvento);
+    if (doc.tipo === 'procEventoNFe' || doc.tipo === 'procEventoCTe') return this.evento(eventoDoc(doc));
+    if (doc.tipo === 'procCTe') return this.cteCompleto(doc);
     this.resumo.ignoradas.push(`NSU ${Number(doc.nsu)}: documento ${doc.schema} não tratado`);
   }
 
@@ -198,15 +216,16 @@ class Importador {
 
   async evento(ev) {
     if (String(ev.tpEvento) !== '110111') return; // só cancelamento interessa
-    const chave = ev.chNFe;
+    const chave = ev.chNFe || ev.chCTe;
+    const modelo = ev.chCTe ? 'CT-e' : 'NF-e';
     const fatura = await this.faturaExistente(chave, chave.substr(6, 14), chave.substr(25, 9));
-    const texto = `NF-e ${chave} cancelada pelo emitente`;
+    const texto = `${modelo} ${chave} cancelado(a) pelo emitente`;
     if (!fatura) return;
     this.resumo.cancelamentos.push(`${texto}: fatura ${fatura.name} (${fatura.state}) precisa ser revista`);
     if (this.args.aplicar) {
       await this.odoo.call('account.move', 'message_post', {
         ids: [fatura.id],
-        body: `<p><b>Atenção:</b> a SEFAZ informou que a NF-e ${chave} foi <b>cancelada pelo emitente</b>. Revise ou cancele esta fatura.</p>`,
+        body: `<p><b>Atenção:</b> a SEFAZ informou que o documento ${modelo} ${chave} foi <b>cancelado pelo emitente</b>. Revise ou cancele esta fatura.</p>`,
         body_is_html: true,
         message_type: 'comment',
         subtype_xmlid: 'mail.mt_note',
@@ -214,9 +233,81 @@ class Importador {
       await this.odoo.call('account.move', 'activity_schedule', {
         ids: [fatura.id],
         act_type_xmlid: 'mail.mail_activity_data_todo',
-        summary: 'NF-e cancelada pelo fornecedor',
+        summary: `${modelo} cancelado(a) pelo fornecedor`,
       });
     }
+  }
+
+  // CNPJ de quem paga o frete: toma3 aponta uma das partes; toma4 (ou toma, no CT-e OS) traz o CNPJ
+  static tomadorCte(cte) {
+    const ide = cte.ide;
+    const explicito = cte.toma || ide.toma4;
+    if (explicito) return digitos(explicito.CNPJ || explicito.CPF);
+    const indice = (ide.toma3 || ide.toma03 || {}).toma;
+    const parte = { 0: cte.rem, 1: cte.exped, 2: cte.receb, 3: cte.dest }[indice];
+    return digitos(parte && (parte.CNPJ || parte.CPF));
+  }
+
+  async cteCompleto(doc) {
+    const cte = doc.dados.cteProc.CTe.infCte;
+    const chave = digitos(cte['@_Id']);
+    const { ide, emit, vPrest } = cte;
+    const rotulo = `CT-e ${ide.nCT} – ${emit.xNome} – ${reais(vPrest.vTPrest)}`;
+
+    if (this.antesDoInicio(ide.dhEmi)) return this.resumo.antigas++;
+    if (Importador.tomadorCte(cte) !== this.cnpj) return this.resumo.cteDeTerceiros++; // frete pago por outra empresa
+    if (this.canceladas.has(chave)) return this.resumo.ignoradas.push(`${rotulo}: cancelado pelo emitente`);
+    const existente = await this.faturaExistente(chave, emit.CNPJ || emit.CPF, ide.nCT);
+    if (existente) return this.resumo.ignoradas.push(`${rotulo}: já lançado (${existente.name})`);
+
+    const parceiro = await this.fornecedor(emit);
+    const notas = lista(cte.infCTeNorm && cte.infCTeNorm.infDoc && cte.infCTeNorm.infDoc.infNFe).map((n) => n.chave);
+    const fatura = {
+      move_type: 'in_invoice',
+      company_id: this.empresa.id,
+      journal_id: this.empresa.diarioFretes || this.empresa.diarioCompras,
+      partner_id: parceiro.id,
+      invoice_date: String(ide.dhEmi).slice(0, 10),
+      l10n_latam_document_type_id: this.empresa.tipoDocCte || false,
+      l10n_latam_document_number: String(Number(ide.nCT)),
+      l10n_br_access_key: chave,
+      ref: `CT-e ${Number(ide.nCT)} série ${ide.serie}`,
+      invoice_line_ids: [[0, 0, {
+        product_id: this.empresa.produtoFrete || false,
+        name: `Frete CT-e ${Number(ide.nCT)}: ${ide.xMunIni}/${ide.UFIni} → ${ide.xMunFim}/${ide.UFFim}`,
+        quantity: 1,
+        price_unit: num(vPrest.vTPrest),
+        tax_ids: [[6, 0, []]], // o valor do CT-e já é o total a pagar, como nos fretes lançados à mão
+        ...(this.empresa.contaFrete && { account_id: this.empresa.contaFrete }),
+      }]],
+    };
+    const diario = this.empresa.diarioFretes ? 'Fretes' : 'Compras';
+    if (!this.args.aplicar) {
+      this.resumo.criadas.push(`${rotulo} → diário ${diario} (simulação)${parceiro.novo ? ' — transportadora nova' : ''}`);
+      return;
+    }
+    if (parceiro.novo) parceiro.id = await this.odoo.create('res.partner', parceiro.valores);
+    fatura.partner_id = parceiro.id;
+    const id = await this.odoo.create('account.move', fatura);
+    await this.odoo.create('ir.attachment', {
+      name: `CTe${chave}.xml`,
+      raw: Buffer.from(doc.xml, 'utf8').toString('base64'),
+      mimetype: 'application/xml',
+      res_model: 'account.move',
+      res_id: id,
+    });
+    const icms = cte.imp && cte.imp.ICMS && Object.values(cte.imp.ICMS)[0];
+    const corpo =
+      `<p>CT-e importado automaticamente da SEFAZ (Distribuição DF-e).</p>` +
+      `<ul><li>Chave: ${chave}</li><li>Emitido em ${String(ide.dhEmi).slice(0, 10).split('-').reverse().join('/')} – ${escapar(ide.natOp || 'prestação de serviço de transporte')}</li>` +
+      `<li>Trajeto: ${escapar(`${ide.xMunIni}/${ide.UFIni} → ${ide.xMunFim}/${ide.UFFim}`)}</li>` +
+      `<li><b>Valor do frete ${reais(vPrest.vTPrest)}</b>${icms && num(icms.vICMS) ? ` | ICMS ${reais(icms.vICMS)}` : ''}</li>` +
+      (notas.length ? `<li>NF-e transportadas: ${notas.join(', ')}</li>` : '') +
+      `</ul>` +
+      (parceiro.novo ? '<p><b>Revisar:</b> transportadora cadastrada automaticamente a partir do XML.</p>' : '');
+    await this.odoo.call('account.move', 'message_post', { ids: [id], body: corpo, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    const [criada] = await this.odoo.call('account.move', 'read', { ids: [id], fields: ['name'] });
+    this.resumo.criadas.push(`${rotulo} → ${criada.name || `rascunho #${id}`} (diário ${diario})`);
   }
 
   async nfeCompleta(doc) {
@@ -368,6 +459,8 @@ async function main() {
 
   const empresas = await odoo.searchRead('res.company', args.empresaId ? [['id', '=', args.empresaId]] : [], ['id', 'name', 'vat', 'state_id']);
   const [tipoDoc] = await odoo.searchRead('l10n_latam.document.type', [['code', '=', TIPO_DOC_NFE], ['country_id.code', '=', 'BR']], ['id'], { limit: 1 });
+  const [tipoDocCte] = await odoo.searchRead('l10n_latam.document.type', [['code', '=', TIPO_DOC_CTE], ['country_id.code', '=', 'BR'], ['active', 'in', [true, false]]], ['id'], { limit: 1 });
+  const [produtoFrete] = await odoo.searchRead('product.product', [['name', '=ilike', 'serviço de frete']], ['id'], { limit: 1 });
   let falhou = false;
 
   for (const empresa of empresas) {
@@ -381,12 +474,14 @@ async function main() {
       odoo.context = { ...odoo.context, allowed_company_ids: [empresa.id, ...odoo.context.allowed_company_ids.filter((c) => c !== empresa.id)] };
       const [estado] = await odoo.searchRead('res.country.state', [['id', '=', empresa.state_id[0]]], ['code']);
       const [diario] = await odoo.searchRead('account.journal', [['company_id', '=', empresa.id], ['type', '=', 'purchase']], ['id', 'name'], { order: 'sequence, id', limit: 1 });
+      const [contaFrete] = await odoo.searchRead('account.account', [['name', '=ilike', 'fretes (transportadora)'], ['company_ids', 'in', [empresa.id]]], ['id'], { limit: 1 });
+      const [diarioFretes] = await odoo.searchRead('account.journal', [['company_id', '=', empresa.id], ['type', '=', 'purchase'], ['name', 'ilike', 'frete']], ['id'], { limit: 1 });
       const sefaz = new SefazClient({ cnpj, uf: estado.code });
       const validade = sefaz.certificado.validoAte;
       const dias = Math.floor((validade - Date.now()) / 86400000);
       console.log(`  Certificado: ${sefaz.certificado.titular} — válido até ${validade.toLocaleDateString('pt-BR')}${dias < 30 ? ` ⚠ vence em ${dias} dias` : ''}`);
 
-      const imp = new Importador(odoo, { ...empresa, diarioCompras: diario.id, tipoDocNfe: tipoDoc.id }, sefaz, args);
+      const imp = new Importador(odoo, { ...empresa, diarioCompras: diario.id, diarioFretes: diarioFretes && diarioFretes.id, contaFrete: contaFrete && contaFrete.id, tipoDocNfe: tipoDoc.id, tipoDocCte: tipoDocCte && tipoDocCte.id, produtoFrete: produtoFrete && produtoFrete.id }, sefaz, args);
       const r = await imp.processar();
       const bloco = (titulo, itens) => itens.length && console.log(`  ${titulo} (${itens.length}):\n${itens.map((i) => `    - ${i}`).join('\n')}`);
       bloco(args.aplicar ? 'Faturas criadas' : 'Faturas a criar', r.criadas);
@@ -394,6 +489,7 @@ async function main() {
       bloco('Cancelamentos', r.cancelamentos);
       bloco('Ignoradas', r.ignoradas);
       bloco('Erros', r.erros);
+      if (r.cteDeTerceiros) console.log(`  ${r.cteDeTerceiros} CT-e em que a empresa não paga o frete ignorados`);
       if (r.antigas) console.log(`  ${r.antigas} documentos anteriores a ${imp.args.desde} ignorados`);
       if (r.erros.length) falhou = true;
     } catch (err) {

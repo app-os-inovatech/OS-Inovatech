@@ -1,5 +1,6 @@
 // Cliente dos web services nacionais da NF-e (Ambiente Nacional) usados pelo destinatário:
 //   - NFeDistribuicaoDFe: baixa as NF-e e eventos emitidos contra o CNPJ (por NSU ou por chave)
+//   - CTeDistribuicaoDFe: baixa os CT-e (conhecimentos de transporte) em que o CNPJ aparece
 //   - NFeRecepcaoEvento4: manifestação do destinatário (ex.: Ciência da Operação), que libera o XML completo
 // Autenticação por TLS mútuo com o certificado A1 (e-CNPJ) da empresa.
 //
@@ -24,11 +25,13 @@ const SERVICOS = {
   producao: {
     tpAmb: '1',
     distribuicao: 'https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx',
+    distribuicaoCte: 'https://www1.cte.fazenda.gov.br/CTeDistribuicaoDFe/CTeDistribuicaoDFe.asmx',
     evento: 'https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
   },
   homologacao: {
     tpAmb: '2',
     distribuicao: 'https://hom1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx',
+    distribuicaoCte: 'https://hom1.cte.fazenda.gov.br/CTeDistribuicaoDFe/CTeDistribuicaoDFe.asmx',
     evento: 'https://hom1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
   },
 };
@@ -100,6 +103,7 @@ class SefazClient {
       ...SERVICOS[this.ambiente],
       ...(process.env.SEFAZ_URL_DISTRIBUICAO && { distribuicao: process.env.SEFAZ_URL_DISTRIBUICAO }),
       ...(process.env.SEFAZ_URL_EVENTO && { evento: process.env.SEFAZ_URL_EVENTO }),
+      ...(process.env.SEFAZ_URL_DISTRIBUICAO_CTE && { distribuicaoCte: process.env.SEFAZ_URL_DISTRIBUICAO_CTE }),
     };
     this.cUF = UF_IBGE[uf];
     if (!this.cUF) throw new Error(`UF inválida para o CNPJ ${this.cnpj}: ${uf}`);
@@ -183,13 +187,17 @@ class SefazClient {
     return corpoResp;
   }
 
-  async _distribuicao(filtro) {
+  // modelo: 'nfe' ou 'cte' (os dois serviços têm o mesmo formato, mudam endereço e namespaces)
+  async _distribuicao(filtro, modelo = 'nfe') {
+    const M = modelo === 'cte' ? 'CTe' : 'NFe';
+    const wsdl = `http://www.portalfiscal.inf.br/${modelo}/wsdl/${M}DistribuicaoDFe`;
     const corpo =
-      '<nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDadosMsg>' +
-      `<distDFeInt xmlns="${NS_NFE}" versao="1.01"><tpAmb>${this.servicos.tpAmb}</tpAmb><cUFAutor>${this.cUF}</cUFAutor><CNPJ>${this.cnpj}</CNPJ>${filtro}</distDFeInt>` +
-      '</nfeDadosMsg></nfeDistDFeInteresse>';
-    const r = await this._soap(this.servicos.distribuicao, 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse', corpo);
-    const ret = r.nfeDistDFeInteresseResponse.nfeDistDFeInteresseResult.retDistDFeInt;
+      `<${modelo}DistDFeInteresse xmlns="${wsdl}"><${modelo}DadosMsg>` +
+      `<distDFeInt xmlns="http://www.portalfiscal.inf.br/${modelo}" versao="${modelo === 'cte' ? '1.00' : '1.01'}"><tpAmb>${this.servicos.tpAmb}</tpAmb><cUFAutor>${this.cUF}</cUFAutor><CNPJ>${this.cnpj}</CNPJ>${filtro}</distDFeInt>` +
+      `</${modelo}DadosMsg></${modelo}DistDFeInteresse>`;
+    const endereco = modelo === 'cte' ? this.servicos.distribuicaoCte : this.servicos.distribuicao;
+    const r = await this._soap(endereco, `${wsdl}/${modelo}DistDFeInteresse`, corpo);
+    const ret = r[`${modelo}DistDFeInteresseResponse`][`${modelo}DistDFeInteresseResult`].retDistDFeInt;
     const documentos = ((ret.loteDistDFeInt && ret.loteDistDFeInt.docZip) || []).map((d) => {
       const xml = zlib.gunzipSync(Buffer.from(d['#text'], 'base64')).toString('utf8');
       return { nsu: d['@_NSU'], schema: d['@_schema'], tipo: d['@_schema'].split('_')[0], xml, dados: lerXml(xml) };
@@ -201,6 +209,10 @@ class SefazClient {
   // cStat 137 = nenhum documento novo: a SEFAZ exige 1 hora de espera antes de consultar de novo.
   distribuicao(ultNSU = '0') {
     return this._distribuicao(`<distNSU><ultNSU>${String(ultNSU).padStart(15, '0')}</ultNSU></distNSU>`);
+  }
+
+  distribuicaoCte(ultNSU = '0') {
+    return this._distribuicao(`<distNSU><ultNSU>${String(ultNSU).padStart(15, '0')}</ultNSU></distNSU>`, 'cte');
   }
 
   consultarChave(chave) {
