@@ -52,6 +52,7 @@ function lerArgs(argv) {
 
 const digitos = (s) => String(s || '').replace(/\D/g, '');
 const num = (v) => Number(v || 0);
+const quantidade = (v) => num(v).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
 const reais = (v) => num(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const formatarCnpj = (c) => (c.length === 14 ? c.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : c.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4'));
 const chaveDoc = (doc) => (doc.tipo === 'resNFe' ? doc.dados.resNFe.chNFe : doc.tipo === 'procNFe' ? digitos(doc.dados.nfeProc.NFe.infNFe['@_Id']) : null);
@@ -371,21 +372,39 @@ class Importador {
     if (existente) return this.resumo.ignoradas.push(`${rotulo}: já lançada (${existente.name})`);
 
     const parceiro = await this.fornecedor(emit);
+    const produtos = [];
+    for (const det of nfe.det) produtos.push(parceiro.id ? await this.produto(parceiro.id, det.prod) : null);
+    const vinculo = parceiro.id ? await this.pedidoDeCompra(nfe, cnpjEmit, produtos) : null;
+    const avisos = [];
+    const aprender = []; // códigos do fornecedor a cadastrar no produto quando o item só foi ligado pelo pedido
     const linhas = [];
     let semProduto = 0;
-    for (const det of nfe.det) {
+    nfe.det.forEach((det, i) => {
       const p = det.prod;
-      const produto = parceiro.id ? await this.produto(parceiro.id, p) : null;
+      const linhaPedido = vinculo && vinculo.itens[i];
+      const produto = linhaPedido ? linhaPedido.product_id && linhaPedido.product_id[0] : produtos[i];
       if (!produto) semProduto++;
       const bruto = num(p.vProd);
-      linhas.push({
+      const linha = {
         product_id: produto || false,
         name: `[${p.cProd}] ${p.xProd}`,
         quantity: num(p.qCom),
         price_unit: num(p.vUnCom),
         discount: bruto && num(p.vDesc) ? Math.round((num(p.vDesc) / bruto) * 1e6) / 1e4 : 0,
-      });
-    }
+      };
+      if (linhaPedido) {
+        linha.purchase_line_id = linhaPedido.id;
+        linha.tax_ids = [[6, 0, linhaPedido.tax_ids]];
+        const preco = num(linhaPedido.price_unit);
+        if (preco && Math.abs(num(p.vUnCom) - preco) / preco > 0.01) avisos.push(`Item ${i + 1} (${p.xProd}): preço na NF-e ${reais(p.vUnCom)} × no pedido ${reais(preco)}.`);
+        const saldo = num(linhaPedido.product_qty) - num(linhaPedido.qty_invoiced);
+        if (num(p.qCom) > saldo + 1e-6) avisos.push(`Item ${i + 1} (${p.xProd}): NF-e fatura ${quantidade(p.qCom)}, mas o pedido só tem ${quantidade(saldo)} a faturar.`);
+        if (!produtos[i] && produto) aprender.push({ produto, cProd: p.cProd, xProd: p.xProd, preco: num(p.vUnCom) });
+      } else if (vinculo) {
+        avisos.push(`Item ${i + 1} (${p.xProd}) não encontrado no pedido ${vinculo.pedido.name}.`);
+      }
+      linhas.push(linha);
+    });
     // Despesas que fazem parte do valor a pagar e não são imposto
     [['vFrete', 'Frete'], ['vSeg', 'Seguro'], ['vOutro', 'Outras despesas acessórias']].forEach(([campo, nome]) => {
       if (num(tot[campo])) linhas.push({ name: `${nome} (NF-e ${ide.nNF})`, quantity: 1, price_unit: num(tot[campo]) });
@@ -404,14 +423,14 @@ class Importador {
       ref: `NF-e ${Number(ide.nNF)} série ${ide.serie}`,
       invoice_line_ids: linhas.map((l) => [0, 0, l]),
     };
+    if (vinculo) fatura.invoice_origin = vinculo.pedido.name;
     if (dups.length) fatura.invoice_date_due = dups[0].dVenc;
 
-    const avisos = [];
     if (parceiro.novo) avisos.push('Fornecedor cadastrado automaticamente a partir do XML: confira regime tributário e setor de atividade.');
     if (semProduto) avisos.push(`${semProduto} de ${nfe.det.length} itens sem produto vinculado no Odoo.`);
 
     if (!this.args.aplicar) {
-      this.resumo.criadas.push(`${rotulo} (simulação)${avisos.length ? ` — ${avisos.join(' ')}` : ''}`);
+      this.resumo.criadas.push(`${rotulo}${vinculo ? ` → pedido ${vinculo.pedido.name}` : ''} (simulação)${avisos.length ? ` — ${avisos.join(' ')}` : ''}`);
       return;
     }
 
@@ -438,6 +457,16 @@ class Importador {
       avisos.push(`DANFE não gerado (${err.message}); o XML está anexado.`);
     }
     const [criada] = await this.odoo.call('account.move', 'read', { ids: [id], fields: ['name', 'amount_total'] });
+    let recebimento = '';
+    if (vinculo) {
+      await this.aprenderCodigos(parceiro.id, aprender);
+      const pendentes = vinculo.pedido.picking_ids.length
+        ? await this.odoo.searchRead('stock.picking', [['id', 'in', vinculo.pedido.picking_ids], ['state', 'not in', ['done', 'cancel']]], ['name'])
+        : [];
+      recebimento =
+        `<li>Pedido de compra: <b>${escapar(vinculo.pedido.name)}</b> (${escapar(vinculo.criterio)})</li>` +
+        (pendentes.length ? `<li>Recebimento pendente: ${pendentes.map((r) => escapar(r.name)).join(', ')} — valide no Estoque quando a mercadoria chegar.</li>` : '');
+    }
 
     const impostos = [['vICMS', 'ICMS'], ['vST', 'ICMS-ST'], ['vFCPST', 'FCP-ST'], ['vIPI', 'IPI'], ['vPIS', 'PIS'], ['vCOFINS', 'COFINS']]
       .filter(([c]) => num(tot[c]))
@@ -448,13 +477,94 @@ class Importador {
       `<p>Importada automaticamente da SEFAZ (Distribuição DF-e).</p>` +
       `<ul><li>Chave: ${chave}</li><li>Emitida em ${String(ide.dhEmi).slice(0, 10).split('-').reverse().join('/')} – natureza: ${escapar(ide.natOp)}</li>` +
       `<li>Produtos ${reais(tot.vProd)} | Desconto ${reais(tot.vDesc)} | <b>Total da NF-e ${reais(tot.vNF)}</b></li>` +
+      recebimento +
       (impostos.length ? `<li>Impostos destacados: ${impostos.join(' | ')}</li>` : '') +
       (dups.length ? `<li>Duplicatas: ${dups.map((d) => `${d.dVenc.split('-').reverse().join('/')} ${reais(d.vDup)}`).join(' | ')}</li>` : '') +
       `</ul>` +
       (avisos.length ? `<p><b>Revisar:</b></p><ul>${avisos.map((a) => `<li>${escapar(a)}</li>`).join('')}</ul>` : '');
     await this.odoo.call('account.move', 'message_post', { ids: [id], body: corpo, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
     this.importadasAgora.add(chave);
-    this.resumo.criadas.push(`${rotulo} → ${criada.name || `rascunho #${id}`}${avisos.length ? ` — ${avisos.join(' ')}` : ''}`);
+    this.resumo.criadas.push(`${rotulo} → ${criada.name || `rascunho #${id}`}${vinculo ? ` (pedido ${vinculo.pedido.name})` : ''}${avisos.length ? ` — ${avisos.join(' ')}` : ''}`);
+  }
+
+  // Pedido de compra confirmado do fornecedor que esta NF-e atende:
+  //   1. número do pedido citado no XML (xPed dos itens, compra/xPed ou "PEDIDO ..." nas informações complementares);
+  //   2. senão, o pedido aberto com mais itens em comum (produtos já vinculados);
+  //   3. senão, o único pedido aberto com o mesmo valor de produtos (tolerância de 1%).
+  // Devolve { pedido, criterio, itens } com a linha do pedido correspondente a cada item da NF-e.
+  async pedidoDeCompra(nfe, cnpjEmit, produtos) {
+    const doc = digitos(cnpjEmit);
+    const pedidos = await this.odoo.searchRead(
+      'purchase.order',
+      [['company_id', '=', this.empresa.id], ['state', 'in', ['purchase', 'done']], ['invoice_status', '!=', 'invoiced'], ['partner_id.vat', 'in', [doc, formatarCnpj(doc)]]],
+      ['id', 'name', 'amount_untaxed', 'order_line', 'picking_ids'],
+      { order: 'date_order desc', limit: 30 }
+    );
+    if (!pedidos.length) return null;
+    const linhas = await this.odoo.call('purchase.order.line', 'read', {
+      ids: pedidos.flatMap((p) => p.order_line),
+      fields: ['order_id', 'product_id', 'name', 'product_qty', 'qty_invoiced', 'price_unit', 'tax_ids', 'display_type'],
+    });
+    const linhasDo = (pedido) => linhas.filter((l) => l.order_id[0] === pedido.id && !l.display_type);
+
+    const citados = new Set();
+    nfe.det.forEach((d) => d.prod.xPed && citados.add(Number(digitos(d.prod.xPed))));
+    if (nfe.compra && nfe.compra.xPed) citados.add(Number(digitos(nfe.compra.xPed)));
+    const cpl = String((nfe.infAdic && nfe.infAdic.infCpl) || '');
+    for (const m of cpl.matchAll(/PEDIDO[^0-9]{0,25}(\d{1,10})|\bP0*(\d{2,6})\b/gi)) citados.add(Number(m[1] || m[2]));
+
+    let escolhido = pedidos.find((p) => citados.has(Number(digitos(p.name))));
+    let criterio = 'número do pedido citado na NF-e';
+    if (!escolhido) {
+      const emComum = (p) => produtos.filter((id) => id && linhasDo(p).some((l) => l.product_id && l.product_id[0] === id)).length;
+      const pontos = pedidos.map((p) => ({ p, n: emComum(p) }));
+      const melhor = Math.max(...pontos.map((x) => x.n));
+      const empatados = pontos.filter((x) => x.n === melhor);
+      if (melhor > 0 && empatados.length === 1) {
+        escolhido = empatados[0].p;
+        criterio = `${melhor} de ${nfe.det.length} itens em comum`;
+      } else {
+        const vProd = num(nfe.total.ICMSTot.vProd) - num(nfe.total.ICMSTot.vDesc);
+        const mesmoValor = pedidos.filter((p) => vProd && Math.abs(num(p.amount_untaxed) - vProd) / vProd <= 0.01);
+        if (mesmoValor.length === 1) {
+          escolhido = mesmoValor[0];
+          criterio = 'mesmo valor de produtos';
+        }
+      }
+    }
+    if (!escolhido) return null;
+
+    // Cada item da NF-e → linha do pedido: mesmo produto, senão descrição parecida, senão mesma posição
+    const disponiveis = linhasDo(escolhido);
+    const usadas = new Set();
+    const palavras = (t) => new Set(String(t || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^A-Z0-9]+/).filter((w) => w.length > 2));
+    const parecido = (a, b) => {
+      const A = palavras(a);
+      const B = palavras(b);
+      const comuns = [...A].filter((w) => B.has(w)).length;
+      return comuns / Math.max(1, Math.min(A.size, B.size));
+    };
+    const itens = nfe.det.map((det, i) => {
+      const livres = disponiveis.filter((l) => !usadas.has(l.id));
+      let l = produtos[i] && livres.find((x) => x.product_id && x.product_id[0] === produtos[i]);
+      if (!l) {
+        const candidatos = livres.map((x) => ({ x, s: parecido(det.prod.xProd, x.name) })).filter((c) => c.s >= 0.5).sort((a, b) => b.s - a.s);
+        l = candidatos[0] && candidatos[0].x;
+      }
+      if (!l && nfe.det.length === disponiveis.length) l = disponiveis[i] && !usadas.has(disponiveis[i].id) ? disponiveis[i] : null;
+      if (l) usadas.add(l.id);
+      return l || null;
+    });
+    return { pedido: escolhido, criterio, itens };
+  }
+
+  // Grava o código do fornecedor no produto, para as próximas NF-e já virem com o produto certo
+  async aprenderCodigos(parceiroId, itens) {
+    for (const { produto, cProd, xProd, preco } of itens) {
+      const [variante] = await this.odoo.call('product.product', 'read', { ids: [produto], fields: ['product_tmpl_id'] });
+      const ja = await this.odoo.searchRead('product.supplierinfo', [['partner_id', '=', parceiroId], ['product_tmpl_id', '=', variante.product_tmpl_id[0]], ['product_code', '=', cProd]], ['id']);
+      if (!ja.length) await this.odoo.create('product.supplierinfo', { partner_id: parceiroId, product_tmpl_id: variante.product_tmpl_id[0], product_code: cProd, product_name: xProd, price: preco });
+    }
   }
 
   async fornecedor(emit) {
