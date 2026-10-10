@@ -31,6 +31,7 @@ try {
 const OdooClient = require('../src/integrations/odoo/odooClient');
 const SefazClient = require('../src/integrations/sefaz/sefazClient');
 const gerarDanfe = require('../src/danfe');
+const gerarDacte = require('../src/dacte');
 
 const TIPO_DOC_NFE = '55';
 const TIPO_DOC_CTE = '57';
@@ -325,6 +326,19 @@ class Importador {
       res_model: 'account.move',
       res_id: id,
     });
+    let semDacte = '';
+    try {
+      const pdf = await gerarDacte(doc.xml);
+      await this.odoo.create('ir.attachment', {
+        name: `DACTE CT-e ${Number(ide.nCT)} - ${emit.xNome}.pdf`,
+        raw: pdf.toString('base64'),
+        mimetype: 'application/pdf',
+        res_model: 'account.move',
+        res_id: id,
+      });
+    } catch (err) {
+      semDacte = `<p><b>Revisar:</b> DACTE não gerado (${escapar(err.message)}); o XML está anexado.</p>`;
+    }
     const icms = cte.imp && cte.imp.ICMS && Object.values(cte.imp.ICMS)[0];
     const corpo =
       `<p>CT-e importado automaticamente da SEFAZ (Distribuição DF-e).</p>` +
@@ -333,7 +347,8 @@ class Importador {
       `<li><b>Valor do frete ${reais(vPrest.vTPrest)}</b>${icms && num(icms.vICMS) ? ` | ICMS ${reais(icms.vICMS)}` : ''}</li>` +
       (notas.length ? `<li>NF-e transportadas: ${notas.join(', ')}</li>` : '') +
       `</ul>` +
-      (parceiro.novo ? '<p><b>Revisar:</b> transportadora cadastrada automaticamente a partir do XML.</p>' : '');
+      (parceiro.novo ? '<p><b>Revisar:</b> transportadora cadastrada automaticamente a partir do XML.</p>' : '') +
+      semDacte;
     await this.odoo.call('account.move', 'message_post', { ids: [id], body: corpo, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
     const [criada] = await this.odoo.call('account.move', 'read', { ids: [id], fields: ['name'] });
     this.resumo.criadas.push(`${rotulo} → ${criada.name || `rascunho #${id}`} (diário ${diario})`);

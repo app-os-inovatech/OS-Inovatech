@@ -5,9 +5,8 @@
 //   const gerarDanfe = require('./danfe');
 //   const pdf = await gerarDanfe(xmlString); // Buffer
 
-const PDFDocument = require('pdfkit');
-const bwipjs = require('bwip-js');
 const { XMLParser } = require('fast-xml-parser');
+const { DocumentoPdf, M, LARG, FIM_PAGINA, dinheiro, quantidade, data, hora, documento, cep, fone, numeroDoc: numeroNf, grupo } = require('./pdfFiscal');
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -17,73 +16,18 @@ const parser = new XMLParser({
   isArray: (nome) => ['det', 'dup', 'vol'].includes(nome),
 });
 
-const M = 15; // margem
-const LARG = 595.28 - 2 * M;
-const FIM_PAGINA = 841.89 - M;
-
-const num = (v) => Number(v || 0);
-const dinheiro = (v) => num(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const quantidade = (v) => num(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-const data = (dh) => (dh ? String(dh).slice(0, 10).split('-').reverse().join('/') : '');
-const hora = (dh) => (dh ? String(dh).slice(11, 19) : '');
-const documento = (d) => {
-  const s = String(d || '').replace(/\D/g, '');
-  if (s.length === 14) return s.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
-  if (s.length === 11) return s.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
-  return s;
-};
-const cep = (c) => String(c || '').replace(/^(\d{5})(\d{3})$/, '$1-$2');
-const fone = (f) => String(f || '').replace(/^(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3');
-const chaveFormatada = (c) => String(c).replace(/(\d{4})(?=\d)/g, '$1 ');
-const numeroNf = (n) => String(n).padStart(9, '0').replace(/(\d{3})(\d{3})(\d{3})/, '$1.$2.$3');
 const MOD_FRETE = { 0: '0-Por conta do Remetente', 1: '1-Por conta do Destinatário', 2: '2-Por conta de Terceiros', 3: '3-Próprio por conta do Remetente', 4: '4-Próprio por conta do Destinatário', 9: '9-Sem Ocorrência de Transporte' };
 
-// Primeiro grupo de um imposto (ex.: ICMS → ICMS00/ICMS10/ICMSSN102…)
-const grupo = (imp) => (imp && typeof imp === 'object' ? Object.values(imp).find((v) => v && typeof v === 'object') || {} : {});
-
-class Danfe {
+class Danfe extends DocumentoPdf {
   constructor(nfeProc) {
+    super(`DANFE NF-e ${nfeProc.NFe.infNFe.ide.nNF}`, nfeProc.NFe.infNFe['@_Id']);
     this.inf = nfeProc.NFe.infNFe;
     this.prot = nfeProc.protNFe && nfeProc.protNFe.infProt;
-    this.chave = String(this.inf['@_Id']).replace(/\D/g, '');
-    this.doc = new PDFDocument({ size: 'A4', margin: M, bufferPages: true, info: { Title: `DANFE NF-e ${this.inf.ide.nNF}`, Producer: 'automacoes-odoo' } });
-  }
-
-  // Caixa com rótulo pequeno em cima e valor embaixo
-  campo(x, y, w, h, rotulo, valor, { alinhar = 'left', tamanho = 8, negrito = false } = {}) {
-    const d = this.doc;
-    d.lineWidth(0.5).rect(x, y, w, h).stroke();
-    d.font('Helvetica').fontSize(5.5).fillColor('black').text(rotulo.toUpperCase(), x + 2, y + 1.5, { width: w - 4, lineBreak: false, ellipsis: true });
-    d.font(negrito ? 'Helvetica-Bold' : 'Helvetica').fontSize(tamanho).text(valor === undefined || valor === null ? '' : String(valor), x + 2, y + h - tamanho - 3, {
-      width: w - 4,
-      align: alinhar,
-      lineBreak: false,
-      ellipsis: true,
-    });
-  }
-
-  // Linha de campos com larguras proporcionais
-  linha(y, h, campos) {
-    const total = campos.reduce((s, c) => s + c[0], 0);
-    let x = M;
-    for (const [peso, rotulo, valor, opcoes] of campos) {
-      const w = (peso / total) * LARG;
-      this.campo(x, y, w, h, rotulo, valor, opcoes);
-      x += w;
-    }
-    return y + h;
-  }
-
-  titulo(y, texto) {
-    this.doc.font('Helvetica-Bold').fontSize(6.5).text(texto, M, y + 2, { lineBreak: false });
-    return y + 10;
   }
 
   async gerar() {
-    this.codigoBarras = await bwipjs.toBuffer({ bcid: 'code128', text: this.chave, scale: 2, height: 12, includetext: false });
-    const pedacos = [];
-    this.doc.on('data', (c) => pedacos.push(c));
-    const fim = new Promise((resolve) => this.doc.on('end', () => resolve(Buffer.concat(pedacos))));
+    const fim = this.iniciar();
+    await this.codigoPronto;
 
     let y = this.canhoto(M);
     y = this.cabecalho(y);
@@ -123,7 +67,6 @@ class Danfe {
 
   cabecalho(y, continuacao = false) {
     const { emit, ide } = this.inf;
-    const e = emit.enderEmit || {};
     const d = this.doc;
     const h = 92;
     const wEmit = 235;
@@ -131,17 +74,7 @@ class Danfe {
     const xChave = M + wEmit + wDanfe;
     const wChave = LARG - wEmit - wDanfe;
 
-    // Emitente
-    d.lineWidth(0.5).rect(M, y, wEmit, h).stroke();
-    d.font('Helvetica-Bold').fontSize(10).text(emit.xNome, M + 4, y + 8, { width: wEmit - 8, align: 'center' });
-    d.font('Helvetica').fontSize(7).text(
-      [
-        [e.xLgr, e.nro, e.xCpl].filter(Boolean).join(', '),
-        `${e.xBairro || ''} - ${cep(e.CEP)}`,
-        `${e.xMun || ''} - ${e.UF || ''}${e.fone ? `  Fone: ${fone(e.fone)}` : ''}`,
-      ].join('\n'),
-      M + 4, d.y + 4, { width: wEmit - 8, align: 'center' }
-    );
+    this.blocoEmitente(M, y, wEmit, h, emit, emit.enderEmit);
 
     // Identificação do DANFE
     d.rect(M + wEmit, y, wDanfe, h).stroke();
@@ -153,18 +86,9 @@ class Danfe {
     d.font('Helvetica-Bold').fontSize(11).text(String(ide.tpNF), xD + 62, y + 44, { width: 16, align: 'center' });
     d.fontSize(8).text(`Nº ${numeroNf(ide.nNF)}`, xD, y + 62, { width: wDanfe, align: 'center' });
     d.text(`SÉRIE ${String(ide.serie).padStart(3, '0')}`, xD, y + 72, { width: wDanfe, align: 'center' });
-    this.posFolha = this.posFolha || [];
-    this.posFolha.push({ pagina: this.doc.bufferedPageRange().count - 1, x: xD, y: y + 82, w: wDanfe });
+    this.marcarFolha(xD, y + 82, wDanfe);
 
-    // Código de barras e chave
-    d.rect(xChave, y, wChave, 38).stroke();
-    d.image(this.codigoBarras, xChave + 8, y + 5, { width: wChave - 16, height: 28 });
-    this.campo(xChave, y + 38, wChave, 22, 'Chave de acesso', chaveFormatada(this.chave), { alinhar: 'center', tamanho: 7.5, negrito: true });
-    d.rect(xChave, y + 60, wChave, h - 60).stroke();
-    d.font('Helvetica').fontSize(7).text('Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora', xChave + 4, y + 65, {
-      width: wChave - 8,
-      align: 'center',
-    });
+    this.blocoChave(xChave, y, wChave, h, 'Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora');
     y += h;
     if (continuacao) return y + 4;
 
@@ -362,13 +286,7 @@ class Danfe {
     d.fontSize(5.5).text('RESERVADO AO FISCO', M + LARG * 0.7 + 2, y + 1.5);
   }
 
-  numerarFolhas() {
-    const total = this.doc.bufferedPageRange().count;
-    for (const { pagina, x, y, w } of this.posFolha) {
-      this.doc.switchToPage(pagina);
-      this.doc.font('Helvetica').fontSize(7).text(`FOLHA ${pagina + 1}/${total}`, x, y, { width: w, align: 'center', lineBreak: false });
-    }
-  }
+
 }
 
 module.exports = async function gerarDanfe(xml) {
