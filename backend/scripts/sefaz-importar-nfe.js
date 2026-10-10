@@ -30,6 +30,7 @@ try {
 } catch {}
 const OdooClient = require('../src/integrations/odoo/odooClient');
 const SefazClient = require('../src/integrations/sefaz/sefazClient');
+const gerarDanfe = require('../src/danfe');
 
 const TIPO_DOC_NFE = '55';
 const TIPO_DOC_CTE = '57';
@@ -409,6 +410,18 @@ class Importador {
       res_model: 'account.move',
       res_id: id,
     });
+    try {
+      const pdf = await gerarDanfe(doc.xml);
+      await this.odoo.create('ir.attachment', {
+        name: `DANFE NF-e ${Number(ide.nNF)} - ${emit.xNome}.pdf`,
+        raw: pdf.toString('base64'),
+        mimetype: 'application/pdf',
+        res_model: 'account.move',
+        res_id: id,
+      });
+    } catch (err) {
+      avisos.push(`DANFE não gerado (${err.message}); o XML está anexado.`);
+    }
     const [criada] = await this.odoo.call('account.move', 'read', { ids: [id], fields: ['name', 'amount_total'] });
 
     const impostos = [['vICMS', 'ICMS'], ['vST', 'ICMS-ST'], ['vFCPST', 'FCP-ST'], ['vIPI', 'IPI'], ['vPIS', 'PIS'], ['vCOFINS', 'COFINS']]
