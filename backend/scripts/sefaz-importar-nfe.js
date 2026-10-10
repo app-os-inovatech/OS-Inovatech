@@ -34,6 +34,7 @@ const SefazClient = require('../src/integrations/sefaz/sefazClient');
 const TIPO_DOC_NFE = '55';
 const TIPO_DOC_CTE = '57';
 const MAX_LOTES = 20; // 50 documentos por lote
+const MAX_CONSULTAS_CHAVE = 10; // por empresa e execução: a SEFAZ limita o uso da consulta por chave
 
 function lerArgs(argv) {
   const args = { aplicar: false };
@@ -69,6 +70,7 @@ class Importador {
     this.cnpj = digitos(empresa.vat);
     this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [], antigas: 0, cteDeTerceiros: 0 };
     this.canceladas = new Set();
+    this.importadasAgora = new Set();
     this._cache = {};
   }
 
@@ -102,7 +104,9 @@ class Importador {
     else this.args.desde = (await this.param('desde')) || undefined;
     this.pendentes = new Set(JSON.parse((await this.param('pendentes')) || '[]'));
     if (this.args.aplicar) await this.reprocessarPendentes();
+    this.aBuscar = [];
     await this.consultar('nfe');
+    if (this.args.aplicar) await this.buscarLiberadas();
     await this.consultar('cte');
     await this.param('pendentes', JSON.stringify([...this.pendentes]));
     return this.resumo;
@@ -158,6 +162,29 @@ class Importador {
     }
   }
 
+  // Logo após a ciência, busca o XML completo pela chave, sem esperar a próxima hora.
+  // O que não vier agora (limite atingido ou XML ainda indisponível) chega pelo NSU na execução seguinte.
+  async buscarLiberadas() {
+    let consultas = 0;
+    for (const chave of this.aBuscar) {
+      if (consultas >= MAX_CONSULTAS_CHAVE) break;
+      consultas++;
+      try {
+        const r = await this.sefaz.consultarChave(chave);
+        if (r.cStat === '656') {
+          console.log(`  NF-e: SEFAZ limitou a consulta por chave: ${r.xMotivo}`);
+          await this.param('proxima', Date.now() + 61 * 60 * 1000);
+          break;
+        }
+        for (const doc of r.documentos.filter((d) => d.tipo === 'procNFe')) await this.documento(doc);
+      } catch (err) {
+        this.resumo.erros.push(`Busca da NF-e ${chave} após a ciência: ${err.message}`);
+      }
+    }
+    const restantes = this.aBuscar.filter((c) => !this.importadasAgora.has(c)).length;
+    if (restantes) console.log(`  ${restantes} NF-e com ciência enviada chegam pelo NSU na próxima execução`);
+  }
+
   // NF-e que falharam numa execução anterior: busca de novo pela chave
   async reprocessarPendentes() {
     for (const chave of [...this.pendentes]) {
@@ -206,8 +233,9 @@ class Importador {
       r = { cStat: 'falha', xMotivo: err.message };
     }
     if (r.cStat === '135' || r.cStat === '573') {
-      this.resumo.ciencia.push(`${rotulo}: XML completo chega na próxima consulta`);
+      this.resumo.ciencia.push(rotulo);
       this.pendentes.delete(chave);
+      this.aBuscar.push(chave);
     } else {
       this.resumo.erros.push(`Ciência de ${rotulo}: ${r.cStat} – ${r.xMotivo}`);
       this.pendentes.add(chave);
@@ -397,6 +425,7 @@ class Importador {
       `</ul>` +
       (avisos.length ? `<p><b>Revisar:</b></p><ul>${avisos.map((a) => `<li>${escapar(a)}</li>`).join('')}</ul>` : '');
     await this.odoo.call('account.move', 'message_post', { ids: [id], body: corpo, body_is_html: true, message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    this.importadasAgora.add(chave);
     this.resumo.criadas.push(`${rotulo} → ${criada.name || `rascunho #${id}`}${avisos.length ? ` — ${avisos.join(' ')}` : ''}`);
   }
 
