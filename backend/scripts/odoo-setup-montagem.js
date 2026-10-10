@@ -6,6 +6,7 @@
 //   3. Categorias de despesa (produtos "pode ser despesa")
 //   4. Diário bancário "Cartão Flash" (depósitos = transferência interna, gastos = custo)
 //   5. Local "Consumo Montagens" + tipo de operação "Consumo – Montagem" (saída de material)
+//   6. Pedido de venda da montagem ligado ao projeto e aos turnos do Planejamento
 //
 // Por padrão roda em modo simulação (não grava nada). Use --aplicar para gravar.
 //
@@ -19,6 +20,7 @@
 // --cliente-id     cliente (loja) do projeto; liga o "Faturável" para a receita aparecer
 // --armazem-id     armazém de onde sai o material (a operação fica na empresa do armazém)
 // --funcionario-id técnico que recebe o custo/hora (ou --tecnico "Nome" para buscar por nome)
+// --pedido         pedido de venda da montagem (ex.: S01061) ou --sap com o pedido SAP do cliente
 // --etapas         etapas a executar, ex.: 1,2 (padrão: todas)
 //
 // Requer ODOO_URL, ODOO_DB e ODOO_API_KEY (ver src/integrations/odoo/odooClient.js).
@@ -42,7 +44,7 @@ const CATEGORIAS_DESPESA = [
 ];
 
 function lerArgs(argv) {
-  const args = { aplicar: false, horasMes: 176, etapas: [1, 2, 3, 4, 5] };
+  const args = { aplicar: false, horasMes: 176, etapas: [1, 2, 3, 4, 5, 6] };
   const numeros = { '--empresa-id': 'empresaId', '--armazem-id': 'armazemId', '--funcionario-id': 'funcionarioId',
     '--cliente-id': 'clienteId', '--valor-mensal': 'valorMensal', '--horas-mes': 'horasMes' };
   for (let i = 0; i < argv.length; i++) {
@@ -51,6 +53,8 @@ function lerArgs(argv) {
     else if (a === '--codigo') args.codigo = argv[++i];
     else if (a === '--loja') args.loja = argv[++i];
     else if (a === '--tecnico') args.tecnico = argv[++i];
+    else if (a === '--pedido') args.pedido = argv[++i];
+    else if (a === '--sap') args.sap = argv[++i];
     else if (a === '--etapas') args.etapas = argv[++i].split(',').map(Number);
     else if (numeros[a]) args[numeros[a]] = Number(argv[++i]);
     else throw new Error(`Argumento desconhecido: ${a}`);
@@ -247,6 +251,58 @@ async function main() {
     pendencias.push('Inventário → Configurações: confirme a valorização automática e o custo médio (AVCO) nas categorias de produto do material.');
   }
 
+  }
+
+  // 6. Pedido de venda da montagem ligado ao projeto e aos turnos ---------------
+  // Sem esse vínculo, ao concluir um turno o Odoo cria sozinho um pedido de
+  // "Serviço em planilhas de horas" (R$/h) e prende o turno a ele; se esse pedido
+  // for cancelado depois, o técnico não consegue mais salvar o turno.
+  if (etapa(6) && (args.pedido || args.sap)) {
+    log('\n6. Pedido de venda da montagem');
+    const [conta] = await odoo.searchRead('account.analytic.account', [['code', '=', args.codigo]], ['id']);
+    const [projeto] = conta
+      ? await odoo.searchRead('project.project', [['account_id', '=', conta.id]], ['id', 'name', 'sale_line_id'])
+      : [];
+    const dominioPedido = args.pedido ? [['name', '=', args.pedido]] : [['client_order_ref', '=', args.sap]];
+    const pedidos = await odoo.searchRead('sale.order', [...dominioPedido, ['state', '=', 'sale']], ['id', 'name']);
+    if (!projeto) {
+      pendencias.push(`Projeto da conta ${args.codigo} não encontrado: rode a etapa 1 antes da 6.`);
+    } else if (pedidos.length !== 1) {
+      pendencias.push(
+        pedidos.length
+          ? `Há ${pedidos.length} pedidos confirmados para ${args.pedido || 'SAP ' + args.sap}: use --pedido com o número do pedido.`
+          : `Pedido confirmado ${args.pedido || 'com SAP ' + args.sap} não encontrado: confirme o pedido de venda antes.`
+      );
+    } else {
+      const pedido = pedidos[0];
+      const [linha] = await odoo.searchRead(
+        'sale.order.line',
+        [['order_id', '=', pedido.id], ['display_type', '=', false]],
+        ['id', 'name'],
+        { order: 'price_subtotal desc', limit: 1 }
+      );
+      log(`  Pedido ${pedido.name} – item "${linha.name}"`);
+      if (args.aplicar) {
+        await odoo.write('sale.order.line', [linha.id], { project_id: projeto.id, analytic_distribution: { [conta.id]: 100 } });
+        await odoo.write('project.project', [projeto.id], { sale_line_id: linha.id });
+      }
+      log(`  ${args.aplicar ? '✔' : '[simulação]'} projeto "${projeto.name}" ligado ao item do pedido ${pedido.name}`);
+
+      // Turnos do projeto sem item de venda ou presos a pedido cancelado
+      const turnos = await odoo.searchRead('planning.slot', [['project_id', '=', projeto.id]], ['id', 'sale_line_id', 'sale_order_id']);
+      const cancelados = new Set(
+        (await odoo.searchRead('sale.order', [['id', 'in', turnos.filter((t) => t.sale_order_id).map((t) => t.sale_order_id[0])], ['state', '=', 'cancel']], ['id']))
+          .map((p) => p.id)
+      );
+      const corrigir = turnos.filter((t) => !t.sale_line_id || (t.sale_order_id && cancelados.has(t.sale_order_id[0])));
+      if (corrigir.length && args.aplicar) {
+        await odoo.write('planning.slot', corrigir.map((t) => t.id), { sale_line_id: linha.id, sale_order_id: pedido.id });
+      }
+      log(`  ${args.aplicar ? '✔' : '[simulação]'} ${corrigir.length} de ${turnos.length} turno(s) ligados ao pedido ${pedido.name}`);
+      if (!turnos.length) {
+        pendencias.push('Nenhum turno no Planejamento com este projeto ainda: depois de criar os turnos, rode de novo com --etapas 6.');
+      }
+    }
   }
 
   log('\nPendências manuais:');
