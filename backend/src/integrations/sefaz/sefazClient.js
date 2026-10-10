@@ -65,6 +65,16 @@ const semProxy = (host) =>
     .map((h) => h.trim().replace(/^\*/, ''))
     .some((h) => h && (host === h || (h.startsWith('.') && host.endsWith(h))));
 
+const buscar = (obj, chave) => {
+  if (!obj || typeof obj !== 'object') return undefined;
+  if (chave in obj) return obj[chave];
+  for (const v of Object.values(obj)) {
+    const achado = buscar(v, chave);
+    if (achado !== undefined) return achado;
+  }
+  return undefined;
+};
+
 const lerXml = (xml) => parser.parse(xml);
 const escaparXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -238,7 +248,9 @@ class SefazClient {
       '<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">' +
       `<envEvento xmlns="${NS_NFE}" versao="1.00"><idLote>${Date.now()}</idLote>${evento}</envEvento></nfeDadosMsg>`;
     const r = await this._soap(this.servicos.evento, 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento', corpo);
-    const ret = r.nfeResultMsg.retEnvEvento;
+    // O nome do elemento que envolve a resposta varia entre autorizadores: procura o retEnvEvento onde estiver
+    const ret = buscar(r, 'retEnvEvento');
+    if (!ret) throw new Error(`Resposta inesperada da SEFAZ ao evento: ${JSON.stringify(r).slice(0, 300)}`);
     const retEvento = ret.retEvento && ret.retEvento[0] && ret.retEvento[0].infEvento;
     if (!retEvento) return { cStat: ret.cStat, xMotivo: ret.xMotivo };
     return { cStat: retEvento.cStat, xMotivo: retEvento.xMotivo, protocolo: retEvento.nProt };
