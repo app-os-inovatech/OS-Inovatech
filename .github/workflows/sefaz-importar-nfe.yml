@@ -1,7 +1,8 @@
 # Importa de hora em hora, para o Odoo, as NF-e emitidas contra os CNPJs do grupo (ver backend/scripts/sefaz-importar-nfe.js).
 # Secrets necessários (Settings → Secrets and variables → Actions):
 #   ODOO_URL, ODOO_DB, ODOO_API_KEY
-#   SEFAZ_CERT_<CNPJ>_PFX (arquivo .pfx em base64) e SEFAZ_CERT_<CNPJ>_SENHA, para cada empresa
+#   SEFAZ_CERT_<CNPJ>_PFX (arquivo .pfx em base64), para cada empresa
+#   SEFAZ_CERT_SENHA (senha dos .pfx; se alguma for diferente, use SEFAZ_CERT_<CNPJ>_SENHA)
 name: Importar NF-e da SEFAZ
 
 on:
@@ -38,10 +39,8 @@ jobs:
           ODOO_URL: ${{ secrets.ODOO_URL }}
           ODOO_DB: ${{ secrets.ODOO_DB }}
           ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+          SEFAZ_CERT_SENHA: ${{ secrets.SEFAZ_CERT_SENHA }}
           SEFAZ_CERT_47383189000102_PFX: ${{ secrets.SEFAZ_CERT_47383189000102_PFX }}
-          SEFAZ_CERT_47383189000102_SENHA: ${{ secrets.SEFAZ_CERT_47383189000102_SENHA }}
           SEFAZ_CERT_16586600000113_PFX: ${{ secrets.SEFAZ_CERT_16586600000113_PFX }}
-          SEFAZ_CERT_16586600000113_SENHA: ${{ secrets.SEFAZ_CERT_16586600000113_SENHA }}
           SEFAZ_CERT_47696866000142_PFX: ${{ secrets.SEFAZ_CERT_47696866000142_PFX }}
-          SEFAZ_CERT_47696866000142_SENHA: ${{ secrets.SEFAZ_CERT_47696866000142_SENHA }}
         run: node scripts/sefaz-importar-nfe.js ${{ (github.event_name == 'schedule' || !inputs.simular) && '--aplicar' || '' }}

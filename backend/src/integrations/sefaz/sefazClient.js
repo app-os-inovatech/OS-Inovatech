@@ -6,7 +6,7 @@
 // Configuração por variáveis de ambiente (uma por CNPJ, somente dígitos):
 //   SEFAZ_AMBIENTE                producao (padrão) ou homologacao
 //   SEFAZ_CERT_<CNPJ>_PFX         conteúdo do arquivo .pfx em base64 — ou SEFAZ_CERT_<CNPJ>_PATH com o caminho
-//   SEFAZ_CERT_<CNPJ>_SENHA       senha do .pfx
+//   SEFAZ_CERT_<CNPJ>_SENHA       senha do .pfx — ou SEFAZ_CERT_SENHA, quando é a mesma para todos
 //   SEFAZ_URL_DISTRIBUICAO / SEFAZ_URL_EVENTO  opcionais: sobrescrevem os endereços (usado em testes)
 //
 // Se HTTPS_PROXY estiver definido, a conexão passa por um túnel CONNECT no proxy.
@@ -70,9 +70,9 @@ const escaparXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 function carregarCertificado(cnpj) {
   const base64 = process.env[`SEFAZ_CERT_${cnpj}_PFX`];
   const caminho = process.env[`SEFAZ_CERT_${cnpj}_PATH`];
-  const senha = process.env[`SEFAZ_CERT_${cnpj}_SENHA`];
+  const senha = process.env[`SEFAZ_CERT_${cnpj}_SENHA`] || process.env.SEFAZ_CERT_SENHA;
   if (!base64 && !caminho) return null;
-  if (senha === undefined) throw new Error(`Senha do certificado ausente: defina SEFAZ_CERT_${cnpj}_SENHA.`);
+  if (senha === undefined) throw new Error(`Senha do certificado ausente: defina SEFAZ_CERT_${cnpj}_SENHA (ou SEFAZ_CERT_SENHA).`);
   const der = base64 ? Buffer.from(base64.replace(/\s+/g, ''), 'base64') : fs.readFileSync(caminho);
   const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(der.toString('binary'))), senha);
   const chaves = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [];
