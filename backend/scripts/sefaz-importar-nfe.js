@@ -55,9 +55,9 @@ class Importador {
     this.odoo = odoo;
     this.empresa = empresa;
     this.sefaz = sefaz;
-    this.args = args;
+    this.args = { ...args };
     this.cnpj = digitos(empresa.vat);
-    this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [] };
+    this.resumo = { criadas: [], ciencia: [], ignoradas: [], cancelamentos: [], erros: [], antigas: 0 };
     this.canceladas = new Set();
     this._cache = {};
   }
@@ -93,6 +93,9 @@ class Importador {
       console.log(`  Aguardando a janela da SEFAZ: próxima consulta permitida às ${new Date(proxima).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
       return this.resumo;
     }
+    // A data inicial vale também para as execuções seguintes (a primeira carga pode levar várias)
+    if (this.args.desde) await this.param('desde', this.args.desde);
+    else this.args.desde = (await this.param('desde')) || undefined;
     this.pendentes = new Set(JSON.parse((await this.param('pendentes')) || '[]'));
     if (this.args.aplicar) await this.reprocessarPendentes();
     let ultNSU = (await this.param('ult_nsu')) || '0';
@@ -167,7 +170,7 @@ class Importador {
 
   async resumoNfe(res) {
     const rotulo = `${res.xNome} – ${reais(res.vNF)} (chave ${res.chNFe})`;
-    if (this.antesDoInicio(res.dhEmi)) return this.resumo.ignoradas.push(`${rotulo}: emitida antes de ${this.args.desde}`);
+    if (this.antesDoInicio(res.dhEmi)) return this.resumo.antigas++;
     if (this.canceladas.has(res.chNFe)) return this.resumo.ignoradas.push(`${rotulo}: cancelada pelo emitente`);
     if (res.cSitNFe !== '1') return this.resumo.ignoradas.push(`${rotulo}: situação ${res.cSitNFe === '3' ? 'cancelada' : 'denegada'}`);
     if (await this.faturaExistente(res.chNFe, res.CNPJ || res.CPF, res.chNFe.substr(25, 9))) return;
@@ -224,7 +227,7 @@ class Importador {
     const cnpjEmit = emit.CNPJ || emit.CPF;
     const rotulo = `NF-e ${ide.nNF} – ${emit.xNome} – ${reais(tot.vNF)}`;
 
-    if (this.antesDoInicio(ide.dhEmi)) return this.resumo.ignoradas.push(`${rotulo}: emitida antes de ${this.args.desde}`);
+    if (this.antesDoInicio(ide.dhEmi)) return this.resumo.antigas++;
     if (this.canceladas.has(chave)) return this.resumo.ignoradas.push(`${rotulo}: cancelada pelo emitente`);
     if (digitos(dest && (dest.CNPJ || dest.CPF)) !== this.cnpj) return this.resumo.ignoradas.push(`${rotulo}: a empresa não é a destinatária (transporte ou autorização de XML)`);
     if (ide.tpNF !== '1') return this.resumo.ignoradas.push(`${rotulo}: nota de entrada emitida pelo próprio fornecedor`);
@@ -391,6 +394,7 @@ async function main() {
       bloco('Cancelamentos', r.cancelamentos);
       bloco('Ignoradas', r.ignoradas);
       bloco('Erros', r.erros);
+      if (r.antigas) console.log(`  ${r.antigas} documentos anteriores a ${imp.args.desde} ignorados`);
       if (r.erros.length) falhou = true;
     } catch (err) {
       falhou = true;
