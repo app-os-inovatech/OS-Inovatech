@@ -99,6 +99,7 @@ app.use('/api/vouchers', require('./routes/vouchers'));
 app.use('/api/admin/vouchers', require('./routes/admin-vouchers'));
 app.use('/api/categorias-despesa', require('./routes/categoriasDespesa'));
 app.use('/api/tecnico/profile', require('./routes/tecnico-profile'));
+app.use('/api/odoo/webhooks', require('./routes/odooWebhooks'));
 
 // Rota de teste
 app.get('/', (req, res) => {
