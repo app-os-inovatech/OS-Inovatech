@@ -42,7 +42,7 @@ async function main() {
   await odoo.login();
   console.log(args.aplicar ? 'Modo: APLICAR (gravando)\n' : 'Modo: SIMULAÇÃO (nada será gravado; use --aplicar)\n');
 
-  const campos = ['id', 'name', 'ref', 'state', 'move_type', 'partner_id', 'amount_total', 'company_id', 'invoice_origin'];
+  const campos = ['id', 'name', 'ref', 'state', 'move_type', 'partner_id', 'amount_total', 'company_id', 'invoice_origin', 'l10n_latam_document_number', 'invoice_payment_term_id', 'invoice_date_due'];
   const tipos = ['in_invoice', 'in_receipt'];
   let [fatura] = /^\d+$/.test(args.fatura) ? await odoo.searchRead('account.move', [['id', '=', Number(args.fatura)]], campos) : [];
   if (!fatura) {
@@ -102,7 +102,14 @@ async function main() {
 
   const estavaLancada = fatura.state === 'posted';
   if (estavaLancada) await odoo.call('account.move', 'button_draft', { ids: [fatura.id] });
-  if (fatura.move_type === 'in_receipt') await odoo.write('account.move', [fatura.id], { move_type: 'in_invoice' });
+  if (fatura.move_type === 'in_receipt') {
+    // trocar o tipo faz o Odoo renumerar o documento e recalcular vencimentos: preserva número e condição
+    await odoo.write('account.move', [fatura.id], { move_type: 'in_invoice' });
+    const manter = { l10n_latam_document_number: fatura.l10n_latam_document_number };
+    if (fatura.invoice_payment_term_id) manter.invoice_payment_term_id = fatura.invoice_payment_term_id[0];
+    else manter.invoice_date_due = fatura.invoice_date_due;
+    await odoo.write('account.move', [fatura.id], manter);
+  }
 
   const [{ partner_id: [parceiroId] }] = [fatura];
   for (const { lf, lp } of plano) {
