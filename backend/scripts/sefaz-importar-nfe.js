@@ -64,6 +64,15 @@ const eventoDoc = (doc) =>
 const lista = (v) => (v === undefined || v === null ? [] : [].concat(v));
 const escapar = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Semelhança entre descrições (palavras com 3+ letras em comum ÷ menor descrição)
+const palavras = (t) => new Set(String(t || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^A-Z0-9]+/).filter((w) => w.length > 2));
+const parecido = (a, b) => {
+  const A = palavras(a);
+  const B = palavras(b);
+  const comuns = [...A].filter((w) => B.has(w)).length;
+  return comuns / Math.max(1, Math.min(A.size, B.size));
+};
+
 class Importador {
   constructor(odoo, empresa, sefaz, args) {
     this.odoo = odoo;
@@ -374,8 +383,10 @@ class Importador {
     const parceiro = await this.fornecedor(emit);
     const produtos = [];
     for (const det of nfe.det) produtos.push(parceiro.id ? await this.produto(parceiro.id, det.prod) : null);
-    const vinculo = parceiro.id ? await this.pedidoDeCompra(nfe, cnpjEmit, produtos) : null;
+    const busca = parceiro.id ? await this.pedidoDeCompra(nfe, cnpjEmit, produtos) : null;
+    const vinculo = busca && busca.pedido ? busca : null;
     const avisos = [];
+    if (busca && !busca.pedido) avisos.push(`Não foi possível ligar a um pedido automaticamente. Pedidos em aberto deste fornecedor: ${busca.abertos.join(', ')} — vincule com scripts/vincular-nf-pedido.js.`);
     const aprender = []; // códigos do fornecedor a cadastrar no produto quando o item só foi ligado pelo pedido
     const linhas = [];
     let semProduto = 0;
@@ -520,9 +531,17 @@ class Importador {
       const pontos = pedidos.map((p) => ({ p, n: emComum(p) }));
       const melhor = Math.max(...pontos.map((x) => x.n));
       const empatados = pontos.filter((x) => x.n === melhor);
+      // itens da NF-e com descrição parecida (≥ 50%) a alguma linha do pedido
+      const parecidos = (p) => nfe.det.filter((d) => linhasDo(p).some((l) => parecido(d.prod.xProd, l.name) >= 0.5)).length;
+      const porDescricao = pedidos.map((p) => ({ p, n: parecidos(p) }));
+      const melhorDesc = Math.max(...porDescricao.map((x) => x.n));
+      const empatadosDesc = porDescricao.filter((x) => x.n === melhorDesc);
       if (melhor > 0 && empatados.length === 1) {
         escolhido = empatados[0].p;
         criterio = `${melhor} de ${nfe.det.length} itens em comum`;
+      } else if (melhorDesc > nfe.det.length / 2 && empatadosDesc.length === 1) {
+        escolhido = empatadosDesc[0].p;
+        criterio = `${melhorDesc} de ${nfe.det.length} itens com descrição parecida`;
       } else {
         const vProd = num(nfe.total.ICMSTot.vProd) - num(nfe.total.ICMSTot.vDesc);
         const mesmoValor = pedidos.filter((p) => vProd && Math.abs(num(p.amount_untaxed) - vProd) / vProd <= 0.01);
@@ -532,18 +551,11 @@ class Importador {
         }
       }
     }
-    if (!escolhido) return null;
+    if (!escolhido) return { pedido: null, abertos: pedidos.map((p) => p.name) };
 
     // Cada item da NF-e → linha do pedido: mesmo produto, senão descrição parecida, senão mesma posição
     const disponiveis = linhasDo(escolhido);
     const usadas = new Set();
-    const palavras = (t) => new Set(String(t || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^A-Z0-9]+/).filter((w) => w.length > 2));
-    const parecido = (a, b) => {
-      const A = palavras(a);
-      const B = palavras(b);
-      const comuns = [...A].filter((w) => B.has(w)).length;
-      return comuns / Math.max(1, Math.min(A.size, B.size));
-    };
     const itens = nfe.det.map((det, i) => {
       const livres = disponiveis.filter((l) => !usadas.has(l.id));
       let l = produtos[i] && livres.find((x) => x.product_id && x.product_id[0] === produtos[i]);
@@ -612,8 +624,10 @@ class Importador {
       const [porEan] = await this.odoo.searchRead('product.product', [['barcode', '=', p.cEAN]], ['id'], { limit: 1 });
       if (porEan) return porEan.id;
     }
-    const porCodigo = await this.odoo.searchRead('product.product', [['default_code', '=', p.cProd]], ['id'], { limit: 2 });
-    return porCodigo.length === 1 ? porCodigo[0].id : null;
+    // Referência interna igual ao código do fornecedor: só aceita se a descrição também for parecida
+    // (códigos curtos como "30" coincidem por acaso com produtos nossos)
+    const porCodigo = await this.odoo.searchRead('product.product', [['default_code', '=', p.cProd]], ['id', 'name'], { limit: 2 });
+    return porCodigo.length === 1 && parecido(p.xProd, porCodigo[0].name) >= 0.5 ? porCodigo[0].id : null;
   }
 }
 
