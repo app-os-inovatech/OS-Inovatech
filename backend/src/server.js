@@ -17,6 +17,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 })); // CORS
+// Esconde o ?token= dos webhooks do Odoo nos logs
+morgan.token('url', (req) => (req.originalUrl || req.url).replace(/([?&]token=)[^&]*/gi, '$1***'));
 app.use(morgan('dev')); // Logging
 // Aumenta limite para uploads menores sem enviar base64 gigantes
 app.use(express.json({ limit: '10mb' })); // Parse JSON
